@@ -76,78 +76,86 @@ const MOOD_COLOR: Record<ReactorMood, string> = {
 }
 
 /**
- * The reactor: a metal bezel, ten glowing coil segments on a turning ring, counter-turning
- * inner rings and a bright core, lit from within. Speaking, a ring of level bars dances
- * around the core and the core throbs; listening, ripples run outward; working, the rings
- * turn fast. Pure vector, so the desktop app animates it; reduced motion shows it at rest.
+ * The reactor as a hologram: a core of light floating over a projector, with tilted rings at three
+ * heights spinning around it in perspective (their back halves pass behind the core, their front
+ * halves in front), scanlines and a faint flicker. Calm when standing by; listening, thinking and
+ * speaking it speeds up, brightens and throws sparks. Pure vector, so the desktop app animates it.
  */
 export function reactor(mood: ReactorMood): string {
   const c = MOOD_COLOR[mood]
   const u = `jv-${mood}`
-  const spin = mood === 'working' ? 3 : mood === 'speaking' || mood === 'listening' ? 6 : 18
-  const pulse = mood === 'speaking' ? 0.42 : mood === 'working' ? 1.1 : mood === 'listening' ? 1.6 : 3.4
+  const busy = mood === 'speaking' || mood === 'working' || mood === 'listening'
+  const turn = mood === 'working' ? 2.4 : busy ? 3.6 : 9
+  const pulse = mood === 'speaking' ? 0.45 : mood === 'working' ? 0.9 : mood === 'listening' ? 1.4 : 3.2
+  const sparkCount = mood === 'speaking' ? 14 : mood === 'working' ? 12 : mood === 'listening' ? 8 : mood === 'error' ? 4 : 0
 
-  const coils = Array.from({ length: 10 }, (_, i) => {
-    const a = i * 36
-    return `<rect x="45" y="11" width="10" height="13" rx="2.5" transform="rotate(${a} 50 50)" fill="url(#${u}-coil)" stroke="${c}" stroke-opacity=".9" stroke-width=".8"/>`
+  // A ring at height y: back arc (dim, drawn first), front arc (bright, drawn after the core).
+  const ring = (y: number, rx: number, ry: number, dash: string, dur: number, reverse: boolean, width: number) => {
+    const anim = `animation:turn ${dur.toFixed(2)}s linear infinite${reverse ? ' reverse' : ''}`
+    const back = `<path d="M${60 - rx} ${y} A${rx} ${ry} 0 0 1 ${60 + rx} ${y}" pathLength="50" fill="none" stroke="${c}" stroke-opacity=".35" stroke-width="${width}" stroke-dasharray="${dash}" style="${anim}"/>`
+    const front = `<path d="M${60 + rx} ${y} A${rx} ${ry} 0 0 1 ${60 - rx} ${y}" pathLength="50" fill="none" stroke="${c}" stroke-width="${width}" stroke-dasharray="${dash}" style="${anim}" filter="url(#${u}-glow)"/>`
+    return { back, front }
+  }
+  const r1 = ring(44, 42, 10, '6 2.5', turn, false, 2.4)
+  const r2 = ring(58, 34, 8.5, '1.2 1.8', turn * 0.7, true, 1.4)
+  const r3 = ring(72, 44, 10.5, '9 3 2 3', turn * 1.3, false, 1.8)
+
+  const sparks = Array.from({ length: sparkCount }, (_, i) => {
+    const a = (i / Math.max(1, sparkCount)) * Math.PI * 2 + i * 0.7
+    const dist = 26 + ((i * 13) % 17)
+    const dx = (Math.cos(a) * dist).toFixed(1)
+    const dy = (Math.sin(a) * dist * 0.55 - 6).toFixed(1)
+    const delay = (((i * 37) % 100) / 100) * 1.4
+    return `<circle cx="60" cy="58" r="${i % 3 === 0 ? 1.1 : 0.7}" fill="#ffffff" style="--dx:${dx}px;--dy:${dy}px;animation:spark 1.4s ease-out infinite;animation-delay:-${delay.toFixed(2)}s"/>`
   }).join('')
 
-  const ticks = Array.from({ length: 60 }, (_, i) => {
-    const long = i % 5 === 0
-    return `<line x1="50" y1="3.2" x2="50" y2="${long ? 6.4 : 4.8}" transform="rotate(${i * 6} 50 50)" stroke="${c}" stroke-opacity="${long ? 0.75 : 0.35}" stroke-width="${long ? 0.9 : 0.5}"/>`
-  }).join('')
+  const scan = Array.from({ length: 30 }, (_, i) => `<rect x="0" y="${i * 4}" width="120" height="1.4" fill="${c}" fill-opacity=".07"/>`).join('')
 
-  const bars =
-    mood === 'speaking'
-      ? `<g class="eq">${Array.from({ length: 28 }, (_, i) => {
-          const d = ((i * 7) % 11) * 0.06
-          return `<g transform="rotate(${(i * (360 / 28)).toFixed(2)} 50 50)"><rect x="49.3" y="26" width="1.4" height="6.5" rx=".7" fill="${c}" style="animation-delay:-${d.toFixed(2)}s"/></g>`
-        }).join('')}</g>`
-      : ''
-
-  const ripples =
-    mood === 'listening'
-      ? `<circle class="rip" cx="50" cy="50" r="22" fill="none" stroke="${c}" stroke-width="1.2"/><circle class="rip rip2" cx="50" cy="50" r="22" fill="none" stroke="${c}" stroke-width="1.2"/>`
-      : ''
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet">
 <defs>
-<radialGradient id="${u}-core" cx="50%" cy="46%" r="55%"><stop offset="0" stop-color="#ffffff"/><stop offset=".28" stop-color="#e8fbff"/><stop offset=".55" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
-<radialGradient id="${u}-bloom" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="${c}" stop-opacity=".55"/><stop offset=".6" stop-color="${c}" stop-opacity=".12"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
-<linearGradient id="${u}-bezel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fb3c8"/><stop offset=".45" stop-color="#3b4b5e"/><stop offset=".55" stop-color="#1c2633"/><stop offset="1" stop-color="#6b7f95"/></linearGradient>
-<linearGradient id="${u}-coil" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".95"/><stop offset=".4" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity=".35"/></linearGradient>
-<radialGradient id="${u}-well" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#16263a"/><stop offset="1" stop-color="#03070d"/></radialGradient>
-<filter id="${u}-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-<filter id="${u}-haze" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+<radialGradient id="${u}-core" cx="45%" cy="40%" r="60%"><stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#e9fdff"/><stop offset=".65" stop-color="${c}" stop-opacity=".85"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+<radialGradient id="${u}-halo" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="${c}" stop-opacity=".5"/><stop offset=".55" stop-color="${c}" stop-opacity=".12"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+<linearGradient id="${u}-beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${c}" stop-opacity=".55"/><stop offset=".55" stop-color="${c}" stop-opacity=".12"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient>
+<radialGradient id="${u}-pad" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffffff" stop-opacity=".9"/><stop offset=".4" stop-color="${c}" stop-opacity=".8"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+<filter id="${u}-glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="${u}-blur" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="1.2"/></filter>
+<filter id="${u}-soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5"/></filter>
+<clipPath id="${u}-clip"><rect x="0" y="0" width="120" height="120"/></clipPath>
 </defs>
 <style>
-.spin{transform-origin:50px 50px;animation:spin ${spin}s linear infinite}
-.back{transform-origin:50px 50px;animation:spin ${(spin * 1.7).toFixed(1)}s linear infinite reverse}
-.throb{transform-origin:50px 50px;animation:throb ${pulse}s ease-in-out infinite}
-.halo{animation:halo ${pulse}s ease-in-out infinite;opacity:.8}
-.eq rect{transform-box:fill-box;transform-origin:50% 100%;animation:eq .36s ease-in-out infinite alternate}
-.rip{transform-origin:50px 50px;animation:rip 1.8s ease-out infinite;opacity:0}
-.rip2{animation-delay:.9s}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes throb{0%,100%{transform:scale(.94)}50%{transform:scale(1.06)}}
-@keyframes halo{0%,100%{opacity:.55}50%{opacity:1}}
-@keyframes eq{0%{transform:scaleY(.25)}100%{transform:scaleY(1.5)}}
-@keyframes rip{0%{transform:scale(1);opacity:.9}100%{transform:scale(2.1);opacity:0}}
+@keyframes turn{to{stroke-dashoffset:-50}}
+@keyframes bob{0%,100%{transform:translateY(-1.2px)}50%{transform:translateY(1.2px)}}
+@keyframes throb{0%,100%{transform:scale(.93)}50%{transform:scale(1.07)}}
+@keyframes flick{0%,100%{opacity:.92}7%{opacity:.78}8%{opacity:.95}53%{opacity:.86}54%{opacity:.97}}
+@keyframes scan{to{transform:translateY(4px)}}
+@keyframes beam{0%,100%{opacity:.75}50%{opacity:1}}
+@keyframes spark{0%{transform:translate(0,0);opacity:0}15%{opacity:1}100%{transform:translate(var(--dx),var(--dy));opacity:0}}
+.holo{animation:flick 4s steps(1) infinite}
+.float{animation:bob 5s ease-in-out infinite}
+.core{transform-origin:60px 58px;animation:throb ${pulse}s ease-in-out infinite}
+.beam{animation:beam ${pulse}s ease-in-out infinite}
+.scan{animation:scan .9s linear infinite}
 </style>
-<circle class="halo" cx="50" cy="50" r="50" fill="url(#${u}-bloom)"/>
-<circle cx="50" cy="50" r="47" fill="url(#${u}-well)" stroke="url(#${u}-bezel)" stroke-width="3.2"/>
-<circle cx="50" cy="50" r="44.6" fill="none" stroke="#000000" stroke-opacity=".55" stroke-width="1.2"/>
-<g>${ticks}</g>
-<g class="spin" filter="url(#${u}-glow)">${coils}</g>
-<circle cx="50" cy="50" r="33" fill="none" stroke="url(#${u}-bezel)" stroke-width="1.6"/>
-<g class="back"><circle cx="50" cy="50" r="30" fill="none" stroke="${c}" stroke-opacity=".75" stroke-width="1.1" stroke-dasharray="9 4 2 4"/></g>
-${ripples}
-${bars}
-<g class="throb">
-<circle class="halo" cx="50" cy="50" r="24" fill="${c}" fill-opacity=".35" filter="url(#${u}-haze)"/>
-<circle cx="50" cy="50" r="19" fill="url(#${u}-core)" filter="url(#${u}-glow)"/>
-<circle cx="50" cy="50" r="19" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width=".8"/>
-<ellipse cx="46" cy="44" rx="7" ry="4" fill="#ffffff" fill-opacity=".45"/>
+<g clip-path="url(#${u}-clip)">
+<ellipse cx="60" cy="58" rx="56" ry="44" fill="url(#${u}-halo)"/>
+<path class="beam" d="M48 110 L22 40 L98 40 L72 110 Z" fill="url(#${u}-beam)"/>
+<ellipse cx="60" cy="110" rx="16" ry="4" fill="url(#${u}-pad)" filter="url(#${u}-glow)"/>
+<ellipse cx="60" cy="110" rx="24" ry="6" fill="none" stroke="${c}" stroke-opacity=".5" stroke-width=".8"/>
+<g class="holo">
+<g class="float">
+${r1.back}${r2.back}${r3.back}
+<line x1="60" y1="24" x2="60" y2="92" stroke="${c}" stroke-opacity=".25" stroke-width=".6" stroke-dasharray="1 2"/>
+<g class="core">
+<circle cx="60" cy="58" r="20" fill="${c}" fill-opacity=".35" filter="url(#${u}-soft)"/>
+<circle cx="60" cy="58" r="13" fill="url(#${u}-core)" filter="url(#${u}-glow)"/>
+<circle cx="60" cy="58" r="13" fill="none" stroke="#ffffff" stroke-opacity=".5" stroke-width=".6"/>
+<circle cx="55.5" cy="53.5" r="3.2" fill="#ffffff" fill-opacity=".55" filter="url(#${u}-blur)"/>
+</g>
+${r1.front}${r2.front}${r3.front}
+<g>${sparks}</g>
+</g>
+<g class="scan">${scan}</g>
+</g>
 </g>
 </svg>`
 }
