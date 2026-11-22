@@ -802,7 +802,7 @@ export const register: Register = (on, options) => {
       }
       return (
         <Box flexDirection="column" gap="xs">
-          <Svg source={panelSvg(view)} alt={`JARVIS Hub: ${state}`} width={440} height={640} />
+          <Svg source={panelSvg(view)} alt={`JARVIS Hub: ${state}`} />
           {buttons}
         </Box>
       )

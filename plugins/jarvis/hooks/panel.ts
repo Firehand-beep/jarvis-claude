@@ -153,16 +153,7 @@ function setArc(svg: string, id: string, d: string): string {
 const JARVIS = '#a5d8ff'
 const YOU = '#5eead4'
 
-/** One log row: marker (filled for JARVIS, outline for you) and text, at baseline y. */
-function logRow(n: number, y: number, line: PanelLine | undefined): string {
-  if (!line) return `<text x="80" y="${y}" class="t fs12" fill="${JARVIS}" id="log-${n}"></text>`
-  const marker =
-    line.who === 'you'
-      ? `<path d="M66 ${y - 8} l5 4 l-5 4" stroke="${YOU}" fill="none" class="w15"></path>`
-      : `<path d="M66 ${y - 8} l5 4 l-5 4 Z" fill="${JARVIS}"></path>`
-  return `${marker}\n<text x="80" y="${y}" class="t fs12" fill="${line.who === 'you' ? YOU : JARVIS}" id="log-${n}">${esc(cut(line.text, 50))}</text>`
-}
-
+/** The panel's SVG, sized to its content: 440 wide, as tall as the log needs (at most 640). */
 export function panelSvg(v: PanelView): string {
   let s = TEMPLATE
   const cls = [`state-${v.state}`, v.voiceOn ? 'voice-on' : '', v.micLive ? 'mic-live' : '', v.safety ? 'has-safety' : '']
@@ -193,16 +184,34 @@ export function panelSvg(v: PanelView): string {
     s = setText(s, 'safety-cmd', cut(v.safety.cmd, 52))
   }
 
-  // Log: log-1 is the newest (bottom), log-8 the oldest; rows 22 px apart from y 622 upward.
-  const recent = v.log.slice(-8).reverse()
-  for (let n = 1; n <= 8; n++) {
-    const y = 622 - (n - 1) * 22
-    const row = new RegExp(`(?:<path d="M66 \\d+[^"]*"[^>]*></path>\\s*)?<text x="80" y="${y}"[^>]*\\bid="log-${n}"[^>]*>[^<]*</text>`)
-    s = s.replace(row, logRow(n, y, recent[n - 1]))
-    s = setText(s, `log-${n}-time`, recent[n - 1]?.time ?? '')
+  // Log: drawn top-down under the info bar (or the safety card), oldest first, newest at the bottom,
+  // and the panel ends just under it, so there is no empty space below a short log.
+  const headerY = v.safety ? 518 : 462
+  const firstY = headerY + 26
+  const room = v.safety ? 5 : 8
+  const lines = v.log.slice(-room)
+  let rows = `<line x1="20" y1="${headerY}" x2="420" y2="${headerY}" stroke="currentColor" class="w1 o25"></line><line x1="20" y1="${headerY}" x2="60" y2="${headerY}" stroke="currentColor" class="w2 o8"></line>`
+  if (lines.length === 0) {
+    rows += `<text x="32" y="${firstY}" class="t fs12" fill="#7f9bb8">Awaiting your command.</text>`
   }
-  const latest = recent[0]
-  s = setText(s, 'latest-1-time', latest?.time ?? '')
-  s = setText(s, 'latest-1', latest ? cut(latest.text, 44) : '')
+  lines.forEach((line, i) => {
+    const y = firstY + i * 22
+    const color = line.who === 'you' ? YOU : JARVIS
+    const marker =
+      line.who === 'you'
+        ? `<path d="M66 ${y - 8} l5 4 l-5 4" stroke="${YOU}" fill="none" class="w15"></path>`
+        : `<path d="M66 ${y - 8} l5 4 l-5 4 Z" fill="${JARVIS}"></path>`
+    rows += `<text x="32" y="${y}" class="m fs10" fill="#7f9bb8">${esc(line.time)}</text>${marker}<text x="80" y="${y}" class="t fs12" fill="${color}">${esc(cut(line.text, 50))}</text>`
+  })
+  const logStart = s.indexOf('<g id="log" display="inline">')
+  const logEnd = s.indexOf('<rect width="440" height="640" fill="url(#jh-scan)"')
+  s = `${s.slice(0, logStart)}<g id="log">${rows}</g>${s.slice(logEnd)}`
+
+  // Fit: the drawing ends 18 px under its last line, and takes the panel's width (no fixed size).
+  const bottom = firstY + Math.max(1, lines.length) * 22 - 4
+  const height = Math.min(640, bottom)
+  s = s.replace(/<svg id="jarvis-panel"([^>]*?) width="440" height="640" viewBox="0 0 440 640"/, `<svg id="jarvis-panel"$1 viewBox="0 0 440 ${height}"`)
+  s = s.replace('<rect width="440" height="640" fill="#050b14">', `<rect width="440" height="${height}" fill="#050b14">`)
+  s = s.replace('<rect width="440" height="640" fill="url(#jh-scan)"', `<rect width="440" height="${height}" fill="url(#jh-scan)"`)
   return s
 }
