@@ -60,6 +60,11 @@ Character:
   "if I may", "very good"), but keep it light: clarity first, period colour
   second. Never quote films, books or other characters.
 
+The person often speaks to you instead of typing (voice input, transcribed on their
+computer). A spoken request is as much theirs as a typed one, but the transcription can mishear:
+read an odd word as what they most likely said, and if a misheard word could change what a
+destructive action does, ask before acting.
+
 Every reply is also read aloud. Open each final reply with a single plain
 sentence (no markdown, no code, under 25 words) that summarises the outcome, as
 if you were saying it in the doorway. Then give the details as usual; technical
@@ -272,8 +277,16 @@ let isWindows: boolean | undefined
 let generation = 0
 let isSpeaking = false
 
-function stopSpeech() {
+let lastStop = 'none yet'
+
+function stopSpeech(why = 'stopped') {
+  if (isSpeaking) lastStop = `${why} at ${new Date().toTimeString().slice(0, 8)}`
   generation++
+}
+
+/** Sends what the person said as the next prompt, as their own words. */
+function submitSpoken($: $, text: string): void {
+  void $.prompt.submit({ text, asUser: true })
 }
 
 async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number) {
@@ -379,7 +392,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     $.ui.toast(`${NAME}'s voice input works on Windows for now.`)
     return undefined
   }
-  stopSpeech()
+  stopSpeech('listening started')
   const gen = ++listenGen
   isListening = true
   $.ui.status(`🎙 ${NAME} · warming up the microphone…`)
@@ -460,7 +473,7 @@ async function hear($: $, o: Opts, language: string, intoDraft = false): Promise
     await $.prompt.fill({ text: ` ${said}`, mode: 'append' })
     return
   }
-  void $.prompt.submit({ text: said })
+  submitSpoken($, said)
   void speak($, acknowledgement(o.title), o)
 }
 
@@ -859,12 +872,15 @@ export const register: Register = (on, options) => {
       else void hear($, opts, language, e.text.trim() !== '')
       return r
     }
-    if (isListening) cancelListening($)
-    stopSpeech()
+    const changesText = e.inputText !== '' || e.end > e.start
+    if (changesText) {
+      if (isListening) cancelListening($)
+      stopSpeech(`you typed (${e.key ? `key ${JSON.stringify(e.key.key)}` : 'paste'})`)
+    }
     const pasted = e.key === undefined ? e.inputText.trim() : ''
     if (autoSend && pasted && e.text.trim() === '' && looksDictated(pasted)) {
       const r = await next({ ...e, inputText: '' })
-      void $.prompt.submit({ text: pasted })
+      submitSpoken($, pasted)
       void speak($, acknowledgement(opts.title), opts)
       return r
     }
@@ -1037,10 +1053,10 @@ export const register: Register = (on, options) => {
           if (isListening) cancelListening($)
           else void hear($, opts, language)
         }} />
-        <Button key="stop" label="⏹ Stop" onPress={() => stopSpeech()} />
+        <Button key="stop" label="⏹ Stop" onPress={() => stopSpeech('Stop button')} />
         <Button key="mute" label={muted ? '🔈 Unmute' : '🔇 Mute'} onPress={async () => {
           await $.store.set(MUTE_KEY, !muted)
-          if (!muted) stopSpeech()
+          if (!muted) stopSpeech('muted')
           hubSet($, s => ({ ...s }))
           void refreshHud($)
         }} />
@@ -1165,7 +1181,7 @@ export const register: Register = (on, options) => {
       case 'stop':
       case 'quiet':
       case 'shh':
-        stopSpeech()
+        stopSpeech('/alfred stop')
         return { text: 'Stopped speaking.' }
       case 'hub': {
         const opened = await $.ui.open({ id: HUB, title: NAME })
@@ -1220,7 +1236,7 @@ export const register: Register = (on, options) => {
         return { text: `By accepting, you confirm you have the rights each licence requires for your use.\n${done.join('\n')}\nNow try /listen again.` }
       }
       case 'status':
-        return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
+        return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}\nSpeech last cut off: ${lastStop}` }
       default:
         return { text: `Usage: /${e.command} hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences` }
     }

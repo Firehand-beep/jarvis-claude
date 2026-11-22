@@ -187,9 +187,11 @@ test('Ctrl+Space listens, then sends what was said', async ($, on) => {
   const submitted: string[] = []
   windowsHost(on, runs, [], `READY\nS\nHEARD\nTEXT ${b64('{"text":"What files are in this folder?"}')}\n`)
   on('prompt.edit', (_, e) => ({ text: e.text + e.inputText, cursor: 0 }))
+  const contexts: (readonly string[] | undefined)[] = []
   on('prompt.submit', (_, e) => {
     submitted.push(e.text)
-    return { text: e.text }
+    contexts.push([JSON.stringify(e.origin)])
+    return { text: e.text, origin: e.origin }
   })
 
   const r = await ($.prompt as any).edit({
@@ -203,6 +205,8 @@ test('Ctrl+Space listens, then sends what was said', async ($, on) => {
   expect(recorder?.env.JARVIS_LANG).toBe('en')
   expect(decode(recorder?.argv ?? [])).toContain('waveInOpen')
   expect(submitted).toEqual(['What files are in this folder?'])
+  // It enters as the person's own words.
+  expect(String(contexts[0]?.join(' '))).toContain('"asUser":true')
 })
 
 test('plain Space is just a space under the default talk key', async ($, on) => {
