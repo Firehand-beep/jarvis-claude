@@ -123,7 +123,28 @@ done
 echo "no audio player found" >&2; exit 1
 `
 
+/** PowerShell's -EncodedCommand: base64 of the script as UTF-16LE (no Node/DOM here). */
+function encodePowerShell(script: string): string {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  const bytes: number[] = []
+  for (let i = 0; i < script.length; i++) {
+    const c = script.charCodeAt(i)
+    bytes.push(c & 0xff, c >> 8)
+  }
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const [a, b, c] = [bytes[i] ?? 0, bytes[i + 1], bytes[i + 2]]
+    const n = (a << 16) | ((b ?? 0) << 8) | (c ?? 0)
+    out += A.charAt((n >> 18) & 63) + A.charAt((n >> 12) & 63)
+    out += b === undefined ? '=' : A.charAt((n >> 6) & 63)
+    out += c === undefined ? '=' : A.charAt(n & 63)
+  }
+  return out
+}
+const PS_ENCODED = encodePowerShell(PS_SCRIPT)
+
 let queue: Promise<unknown> = Promise.resolve()
+let lastError: string | undefined
 let isWindows: boolean | undefined
 
 async function synthesizeAndPlay($: $, text: string, o: Opts) {
@@ -137,9 +158,9 @@ async function synthesizeAndPlay($: $, text: string, o: Opts) {
     JARVIS_HDR_VALUE: req.header?.[1] ?? '',
   }
   const argv = isWindows
-    ? ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', '-']
+    ? ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', PS_ENCODED]
     : ['sh', '-s']
-  const r = await $.process.run(argv, { stdin: isWindows ? PS_SCRIPT : SH_SCRIPT, env, timeoutMs: 150_000 })
+  const r = await $.process.run(argv, isWindows ? { env, timeoutMs: 150_000 } : { stdin: SH_SCRIPT, env, timeoutMs: 150_000 })
   if (r.exitCode !== 0) {
     const why = r.stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `exit ${r.exitCode}`
     const hint = o.provider === 'voicestudio' && /connect|refused|unable|actively/i.test(why)
@@ -150,15 +171,21 @@ async function synthesizeAndPlay($: $, text: string, o: Opts) {
 }
 
 /** Queue an utterance so lines never talk over each other. */
-function speak($: $, text: string, opts: Opts): Promise<void> {
+/** Resolves to the error text, or undefined when the line played (or was muted). */
+function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
   const line = text.trim()
-  if (!line) return Promise.resolve()
+  if (!line) return Promise.resolve(undefined)
   const run = queue.then(async () => {
-    if ((await $.store.get(MUTE_KEY)) === true) return
+    if ((await $.store.get(MUTE_KEY)) === true) return undefined
     try {
       await synthesizeAndPlay($, line, opts)
+      lastError = undefined
+      return undefined
     } catch (err) {
-      $.ui.toast(`JARVIS voice failed: ${err instanceof Error ? err.message : String(err)}`)
+      lastError = err instanceof Error ? err.message : String(err)
+      $.ui.toast(`JARVIS voice failed: ${lastError}`)
+      $.ui.status('⚠ JARVIS voice error: /jarvis status')
+      return lastError
     }
   })
   queue = run
@@ -188,7 +215,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS voice: /jarvis mute | unmute | test | say <text>',
+      description: 'JARVIS voice: /jarvis test | status | say <text> | mute | unmute',
     })
     const result = await next(e)
     $.ui.status('◉ JARVIS')
@@ -245,11 +272,16 @@ export const register: Register = (on, options) => {
         void speak($, rest.join(' '), opts)
         return { text: `Speaking: ${rest.join(' ')}` }
       case 'test':
-      case '':
-        await speak($, `All systems nominal, ${opts.title}. Voice link is working.`, opts)
-        return { text: `Voice test sent (engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}). If you heard nothing, check the toast for an error.` }
+      case '': {
+        const where = `engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}`
+        const err = await speak($, `All systems nominal, ${opts.title}. Voice link is working.`, opts)
+        if (!err) $.ui.status('◉ JARVIS')
+        return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
+      }
+      case 'status':
+        return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis mute | unmute | test | say <text>' }
+        return { text: 'Usage: /jarvis test | status | say <text> | mute | unmute' }
     }
   })
 }

@@ -21,11 +21,19 @@ test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($
 
   const spoken = runs.find(r => r.env.JARVIS_BODY?.includes('All tests pass'))
   expect(spoken?.argv[0]).toBe('powershell.exe')
+  // The script travels as -EncodedCommand (UTF-16LE base64), not stdin.
+  const enc = spoken?.argv[spoken.argv.indexOf('-EncodedCommand') + 1] ?? ''
+  const raw = atob(enc)
+  let script = ''
+  for (let i = 0; i < raw.length; i += 2) script += String.fromCharCode(raw.charCodeAt(i) | (raw.charCodeAt(i + 1) << 8))
+  expect(script).toContain('System.Media.SoundPlayer')
+  expect(script).toContain("Invoke-WebRequest")
   expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/speech')
   const body = JSON.parse(spoken?.env.JARVIS_BODY ?? '{}')
   expect(body.input).toBe('All tests pass, sir.')
   expect(body.response_format).toBe('wav')
-  expect(body.instructions).toContain('british accent')
+  expect(body.voice).toBe('Jarvis')
+  expect(body.instructions).toBeUndefined()
 })
 
 test('the persona is added to the system prompt', async ($, on) => {
