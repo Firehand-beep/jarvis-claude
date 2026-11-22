@@ -62,11 +62,92 @@ function hubMic($: $, mic: MicPhase): void {
   hubSet($, st => ({ ...st, mic }))
 }
 
-/** The arc reactor: rings that turn faster while JARVIS is busy, in the colour of its state. */
-function reactor(color: string, busy: boolean): string {
-  const spin = busy ? 4 : 16
-  const pulse = busy ? 1.2 : 3.2
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><style>.r{transform-origin:50px 50px;animation:spin ${spin}s linear infinite}.q{transform-origin:50px 50px;animation:spin ${spin * 1.6}s linear infinite reverse}.p{animation:pulse ${pulse}s ease-in-out infinite;opacity:.8}@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}</style><circle cx="50" cy="50" r="47" fill="none" stroke="${color}" stroke-opacity=".22" stroke-width="1.5"/><g class="r"><circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="3" stroke-dasharray="16 7"/></g><g class="q"><circle cx="50" cy="50" r="31" fill="none" stroke="${color}" stroke-opacity=".7" stroke-width="2" stroke-dasharray="5 5"/></g><circle class="p" cx="50" cy="50" r="21" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="2"/><circle class="p" cx="50" cy="50" r="9" fill="${color}"/></svg>`
+export type ReactorMood = 'idle' | 'speaking' | 'listening' | 'working' | 'error' | 'muted'
+
+const MOOD_COLOR: Record<ReactorMood, string> = {
+  idle: '#38bdf8',
+  speaking: '#7dd3fc',
+  listening: '#5eead4',
+  working: '#f5b544',
+  error: '#f0524f',
+  muted: '#64748b',
+}
+
+/**
+ * The reactor: a metal bezel, ten glowing coil segments on a turning ring, counter-turning
+ * inner rings and a bright core, lit from within. Speaking, a ring of level bars dances
+ * around the core and the core throbs; listening, ripples run outward; working, the rings
+ * turn fast. Pure vector, so the desktop app animates it; reduced motion shows it at rest.
+ */
+export function reactor(mood: ReactorMood): string {
+  const c = MOOD_COLOR[mood]
+  const u = `jv-${mood}`
+  const spin = mood === 'working' ? 3 : mood === 'speaking' || mood === 'listening' ? 6 : 18
+  const pulse = mood === 'speaking' ? 0.42 : mood === 'working' ? 1.1 : mood === 'listening' ? 1.6 : 3.4
+
+  const coils = Array.from({ length: 10 }, (_, i) => {
+    const a = i * 36
+    return `<rect x="45" y="11" width="10" height="13" rx="2.5" transform="rotate(${a} 50 50)" fill="url(#${u}-coil)" stroke="${c}" stroke-opacity=".9" stroke-width=".8"/>`
+  }).join('')
+
+  const ticks = Array.from({ length: 60 }, (_, i) => {
+    const long = i % 5 === 0
+    return `<line x1="50" y1="3.2" x2="50" y2="${long ? 6.4 : 4.8}" transform="rotate(${i * 6} 50 50)" stroke="${c}" stroke-opacity="${long ? 0.75 : 0.35}" stroke-width="${long ? 0.9 : 0.5}"/>`
+  }).join('')
+
+  const bars =
+    mood === 'speaking'
+      ? `<g class="eq">${Array.from({ length: 28 }, (_, i) => {
+          const d = ((i * 7) % 11) * 0.06
+          return `<g transform="rotate(${(i * (360 / 28)).toFixed(2)} 50 50)"><rect x="49.3" y="26" width="1.4" height="6.5" rx=".7" fill="${c}" style="animation-delay:-${d.toFixed(2)}s"/></g>`
+        }).join('')}</g>`
+      : ''
+
+  const ripples =
+    mood === 'listening'
+      ? `<circle class="rip" cx="50" cy="50" r="22" fill="none" stroke="${c}" stroke-width="1.2"/><circle class="rip rip2" cx="50" cy="50" r="22" fill="none" stroke="${c}" stroke-width="1.2"/>`
+      : ''
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+<defs>
+<radialGradient id="${u}-core" cx="50%" cy="46%" r="55%"><stop offset="0" stop-color="#ffffff"/><stop offset=".28" stop-color="#e8fbff"/><stop offset=".55" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+<radialGradient id="${u}-bloom" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="${c}" stop-opacity=".55"/><stop offset=".6" stop-color="${c}" stop-opacity=".12"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+<linearGradient id="${u}-bezel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fb3c8"/><stop offset=".45" stop-color="#3b4b5e"/><stop offset=".55" stop-color="#1c2633"/><stop offset="1" stop-color="#6b7f95"/></linearGradient>
+<linearGradient id="${u}-coil" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".95"/><stop offset=".4" stop-color="${c}"/><stop offset="1" stop-color="${c}" stop-opacity=".35"/></linearGradient>
+<radialGradient id="${u}-well" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#16263a"/><stop offset="1" stop-color="#03070d"/></radialGradient>
+<filter id="${u}-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="${u}-haze" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+</defs>
+<style>
+.spin{transform-origin:50px 50px;animation:spin ${spin}s linear infinite}
+.back{transform-origin:50px 50px;animation:spin ${(spin * 1.7).toFixed(1)}s linear infinite reverse}
+.throb{transform-origin:50px 50px;animation:throb ${pulse}s ease-in-out infinite}
+.halo{animation:halo ${pulse}s ease-in-out infinite;opacity:.8}
+.eq rect{transform-box:fill-box;transform-origin:50% 100%;animation:eq .36s ease-in-out infinite alternate}
+.rip{transform-origin:50px 50px;animation:rip 1.8s ease-out infinite;opacity:0}
+.rip2{animation-delay:.9s}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes throb{0%,100%{transform:scale(.94)}50%{transform:scale(1.06)}}
+@keyframes halo{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes eq{0%{transform:scaleY(.25)}100%{transform:scaleY(1.5)}}
+@keyframes rip{0%{transform:scale(1);opacity:.9}100%{transform:scale(2.1);opacity:0}}
+</style>
+<circle class="halo" cx="50" cy="50" r="50" fill="url(#${u}-bloom)"/>
+<circle cx="50" cy="50" r="47" fill="url(#${u}-well)" stroke="url(#${u}-bezel)" stroke-width="3.2"/>
+<circle cx="50" cy="50" r="44.6" fill="none" stroke="#000000" stroke-opacity=".55" stroke-width="1.2"/>
+<g>${ticks}</g>
+<g class="spin" filter="url(#${u}-glow)">${coils}</g>
+<circle cx="50" cy="50" r="33" fill="none" stroke="url(#${u}-bezel)" stroke-width="1.6"/>
+<g class="back"><circle cx="50" cy="50" r="30" fill="none" stroke="${c}" stroke-opacity=".75" stroke-width="1.1" stroke-dasharray="9 4 2 4"/></g>
+${ripples}
+${bars}
+<g class="throb">
+<circle class="halo" cx="50" cy="50" r="24" fill="${c}" fill-opacity=".35" filter="url(#${u}-haze)"/>
+<circle cx="50" cy="50" r="19" fill="url(#${u}-core)" filter="url(#${u}-glow)"/>
+<circle cx="50" cy="50" r="19" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width=".8"/>
+<ellipse cx="46" cy="44" rx="7" ry="4" fill="#ffffff" fill-opacity=".45"/>
+</g>
+</svg>`
 }
 
 function clockTime(ms: number): string {
@@ -688,7 +769,18 @@ export const register: Register = (on, options) => {
     }
 
     const listening = st.mic !== 'idle'
-    const color = st.voiceError ? '#f0524f' : listening ? '#5eead4' : st.working ? '#f5b544' : muted ? '#64748b' : '#38bdf8'
+    const mood: ReactorMood = st.voiceError
+      ? 'error'
+      : listening
+        ? 'listening'
+        : st.speaking
+          ? 'speaking'
+          : st.working
+            ? 'working'
+            : muted
+              ? 'muted'
+              : 'idle'
+    const color = MOOD_COLOR[mood]
     const state = st.voiceError
       ? 'Voice error'
       : st.mic === 'warming'
@@ -716,7 +808,7 @@ export const register: Register = (on, options) => {
           {e.surface === 'desktop' || e.surface === 'mobile'
             ? (() => {
                 const { Svg } = $.ui.resolve(e)
-                return <Svg source={reactor(color, st.working || listening || st.speaking)} alt={`JARVIS: ${state}`} width={64} height={64} />
+                return <Svg source={reactor(mood)} alt={`JARVIS: ${state}`} width={112} height={112} />
               })()
             : <Text color={color}>◉</Text>}
           <Box flexDirection="column">
