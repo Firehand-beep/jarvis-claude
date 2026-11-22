@@ -742,6 +742,26 @@ async function fireDue($: $, o: Opts, missedAtStart: boolean): Promise<void> {
   await setReminders($, keep.sort((a, b) => a.due - b.due))
 }
 
+/** Branch and uncommitted changes, kept for the Hub so drawing it never waits on git. */
+let project: { branch: string | null; changes: number | null; at: number } = { branch: null, changes: null, at: 0 }
+let projectBusy = false
+
+async function refreshProject($: $): Promise<void> {
+  if (projectBusy) return
+  projectBusy = true
+  try {
+    const wc = await $.vcs.detect({ path: await $.session.cwd() })
+    project = wc
+      ? { branch: wc.branch, changes: (await $.vcs.status({ path: wc.root })).changes?.length ?? null, at: Date.now() }
+      : { branch: null, changes: null, at: Date.now() }
+    hubSet($, st => ({ ...st }))
+  } catch {
+    project = { ...project, at: Date.now() }
+  } finally {
+    projectBusy = false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HUD (status line) and briefings
 // ---------------------------------------------------------------------------
@@ -856,14 +876,16 @@ export const register: Register = (on, options) => {
   let safetySpokeAt = 0
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({
+    // Everything Alfred registers, all at once: one after another they added up to seconds.
+    const regs: Promise<unknown>[] = []
+    regs.push($.command.register({
       name: 'jarvis',
       description: `${NAME}: /jarvis hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences (also /alfred)`,
-    })
-    await $.command.register({
+    }))
+    regs.push($.command.register({
       name: 'alfred',
       description: `${NAME}: /alfred hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
-    })
+    }))
     const winTools: { name: string; description: string; inputSchema?: Record<string, unknown> }[] = [
       {
         name: 'volume',
@@ -916,52 +938,50 @@ export const register: Register = (on, options) => {
         inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
       },
     ]
-    for (const t of winTools) await $.tool.register({ ...t, isDeferred: false })
+    for (const t of winTools) regs.push($.tool.register({ ...t, isDeferred: false }))
+    regs.push($.tool.register({
+      name: 'weather',
+      description: `Current weather and a 3-day forecast for a place (Open-Meteo). Use it for any weather question instead of a web search.${homeCity ? ` No place given means ${homeCity}.` : ''}`,
+      inputSchema: { type: 'object', properties: { place: { type: 'string', description: 'A city or town, e.g. "Singapore" or "Paris, France".' } } },
+      isDeferred: false,
+    }))
+    if (useMemory) {
+      regs.push($.tool.register({
+        name: 'remember',
+        description: `Save one short, self-contained note to ${NAME}'s long-term memory (memory.md on the person's computer): a preference, a fact about them or their work, a decision, a project, a person. Use it whenever they tell you something worth keeping or ask you to remember something.`,
+        inputSchema: { type: 'object', properties: { note: { type: 'string', description: 'The note, one sentence, understandable on its own later.' } }, required: ['note'] },
+        isDeferred: false,
+      }))
+      regs.push($.tool.register({
+        name: 'recall',
+        description: `Search ${NAME}'s memory: the notes and the full journal of past conversations with the person. Use it when they refer to anything earlier (what was decided, said, done, last week, before). Returns matching notes and journal entries, newest first.`,
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'A few key words to look for, e.g. "hub design" or "pnpm".' } }, required: ['query'] },
+        isDeferred: false,
+      }))
+    }
+    if (voiceInput) {
+      regs.push($.command.register({ name: 'listen', description: `${NAME}: speak your next prompt (or press Ctrl+Space)` }))
+    }
+    await Promise.all(regs.map(r => r.catch(err => $.ui.log(`register: ${String(err)}`, { to: 'debug' }))))
+
+    const result = await next(e)
+    // The Hub first, so it is up at once; everything else follows without holding it up.
+    if (showHub) void $.ui.open({ id: HUB, title: NAME }).catch(() => undefined)
+    void refreshHud($)
+    void refreshProject($)
+    if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
+    if (useLook) void $.theme.set(LOOK).catch(err => $.ui.log(`jarvis look not set: ${String(err)}`, { to: 'debug' }))
+    if (useMemory) {
+      void (async () => {
+        memFolderShown = await memoryFolderShown($)
+        await loadMemory($)
+      })().catch(err => $.ui.log(`memory: not loaded: ${String(err)}`, { to: 'debug' }))
+    }
     reminderTimer?.cancel()
     reminderTimer = $.clock.every(15_000, () => {
       void fireDue($, opts, false).catch(err => $.ui.log(`reminders: ${String(err)}`, { to: 'debug' }))
     })
     void fireDue($, opts, true).catch(() => undefined)
-    await $.tool.register({
-      name: 'weather',
-      description: `Current weather and a 3-day forecast for a place (Open-Meteo). Use it for any weather question instead of a web search.${homeCity ? ` No place given means ${homeCity}.` : ''}`,
-      inputSchema: { type: 'object', properties: { place: { type: 'string', description: 'A city or town, e.g. "Singapore" or "Paris, France".' } } },
-      isDeferred: false,
-    })
-    if (useMemory) {
-      await $.tool.register({
-        name: 'remember',
-        description: `Save one short, self-contained note to ${NAME}'s long-term memory (memory.md on the person's computer): a preference, a fact about them or their work, a decision, a project, a person. Use it whenever they tell you something worth keeping or ask you to remember something.`,
-        inputSchema: { type: 'object', properties: { note: { type: 'string', description: 'The note, one sentence, understandable on its own later.' } }, required: ['note'] },
-        isDeferred: false,
-      })
-      await $.tool.register({
-        name: 'recall',
-        description: `Search ${NAME}'s memory: the notes and the full journal of past conversations with the person. Use it when they refer to anything earlier (what was decided, said, done, last week, before). Returns matching notes and journal entries, newest first.`,
-        inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'A few key words to look for, e.g. "hub design" or "pnpm".' } }, required: ['query'] },
-        isDeferred: false,
-      })
-      try {
-        memFolderShown = await memoryFolderShown($)
-        await loadMemory($)
-      } catch (err) {
-        $.ui.log(`memory: not loaded: ${String(err)}`, { to: 'debug' })
-      }
-    }
-    if (voiceInput) {
-      await $.command.register({ name: 'listen', description: `${NAME}: speak your next prompt (or press Ctrl+Space)` })
-    }
-    const result = await next(e)
-    void refreshHud($)
-    if (showHub) void $.ui.open({ id: HUB, title: NAME }).catch(() => undefined)
-    if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
-    if (useLook) {
-      try {
-        await $.theme.set(LOOK)
-      } catch (err) {
-        $.ui.log(`jarvis look not set: ${String(err)}`, { to: 'debug' })
-      }
-    }
     // Greet once per session: a restart of the plugin (an update, a settings change) is not a new
     // session. After a restart, finish the line that was cut off, if it was cut off just now.
     const sessionId = await $.session.id().catch(() => '')
@@ -1129,6 +1149,7 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return r
     hubSet($, st => ({ ...st, working: false, lastTaskMs: e.durationMs }))
     void refreshHud($)
+    void refreshProject($)
     const said = pendingPrompts.get(e.turnId)
     pendingPrompts.delete(e.turnId)
     if (useMemory && said && e.answer) {
@@ -1183,17 +1204,9 @@ export const register: Register = (on, options) => {
     } catch {
       // best effort
     }
-    let branch: string | null = null
-    let changes: number | null = null
-    try {
-      const wc = await $.vcs.detect({ path: await $.session.cwd() })
-      if (wc) {
-        branch = wc.branch
-        changes = (await $.vcs.status({ path: wc.root })).changes?.length ?? null
-      }
-    } catch {
-      // not a repository
-    }
+    // From the cache; a stale one is refreshed in the background and the Hub redraws when it lands.
+    const { branch, changes } = project
+    if (Date.now() - project.at > 20_000) void refreshProject($)
 
     const listening = st.mic !== 'idle'
     const mood: ReactorMood = st.voiceError

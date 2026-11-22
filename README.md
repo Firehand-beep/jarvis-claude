@@ -4,7 +4,7 @@ A series of mods that turn Claude Code into Alfred, an old-school English family
 
 | Mod | Status | What it does |
 |---|---|---|
-| `jarvis` | v0.15.0 | Windows control, reminders and timers, memory (notes + full journal), weather and web answers, Alfred Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
+| `jarvis` | v0.15.1 | Windows control, reminders and timers, memory (notes + full journal), weather and web answers, Alfred Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
 
 ## Install
 
