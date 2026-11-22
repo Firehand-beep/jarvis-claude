@@ -1,6 +1,8 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { failMessage, LISTEN_ENCODED, licenceModels, parseListen } from './listen'
 import { LOOK } from './look'
+import { encodePowerShell, POWERSHELL } from './powershell'
 import { riskOf, SHELL_TOOLS } from './protocols'
 
 type $ = EngineInterface
@@ -174,24 +176,6 @@ done
 echo "no audio player found" >&2; exit 1
 `
 
-/** PowerShell's -EncodedCommand: base64 of the script as UTF-16LE (no Node/DOM here). */
-function encodePowerShell(script: string): string {
-  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-  const bytes: number[] = []
-  for (let i = 0; i < script.length; i++) {
-    const c = script.charCodeAt(i)
-    bytes.push(c & 0xff, c >> 8)
-  }
-  let out = ''
-  for (let i = 0; i < bytes.length; i += 3) {
-    const [a, b, c] = [bytes[i] ?? 0, bytes[i + 1], bytes[i + 2]]
-    const n = (a << 16) | ((b ?? 0) << 8) | (c ?? 0)
-    out += A.charAt((n >> 18) & 63) + A.charAt((n >> 12) & 63)
-    out += b === undefined ? '=' : A.charAt((n >> 6) & 63)
-    out += c === undefined ? '=' : A.charAt(n & 63)
-  }
-  return out
-}
 const PS_ENCODED = encodePowerShell(PS_SCRIPT)
 
 let queue: Promise<unknown> = Promise.resolve()
@@ -220,7 +204,7 @@ async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number) {
   if (isWindows) {
     // Spawned, so leaving the loop ends PowerShell and the clip with it.
     const child = $.process.spawn({
-      argv: ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', PS_ENCODED],
+      argv: [...POWERSHELL, PS_ENCODED],
       env,
     })
     for await (const chunk of child) {
@@ -272,6 +256,107 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
   })
   queue = run
   return run
+}
+
+// ---------------------------------------------------------------------------
+// Voice input: tap Space in an empty prompt (or /listen), speak, and it is sent
+// ---------------------------------------------------------------------------
+
+let listenGen = 0
+let isListening = false
+/** The models the speech engine last said need their licence accepted. */
+let pendingLicences: { repo_id: string; fingerprint: string; license?: string }[] = []
+
+async function onWindows($: $): Promise<boolean> {
+  if (isWindows === undefined) isWindows = (await $.session.machine()).sysname === 'Windows_NT'
+  return isWindows
+}
+
+function cancelListening($: $) {
+  if (!isListening) return
+  listenGen++
+  isListening = false
+  void refreshHud($)
+}
+
+/** Records one utterance and hands back what was said (or undefined), reporting progress in the status line. */
+async function listenOnce($: $, o: Opts, language: string): Promise<string | undefined> {
+  if (!(await onWindows($))) {
+    $.ui.toast('JARVIS voice input works on Windows for now.')
+    return undefined
+  }
+  stopSpeech()
+  const gen = ++listenGen
+  isListening = true
+  $.ui.status('🎙 JARVIS · warming up the microphone…')
+  const child = $.process.spawn({
+    argv: [...POWERSHELL, LISTEN_ENCODED],
+    env: {
+      JARVIS_URL: `${o.vsUrl.replace(/\/+$/, '')}/v1/audio/transcriptions`,
+      JARVIS_LANG: language,
+      JARVIS_MAX_MS: '30000',
+      JARVIS_SILENCE_MS: '1100',
+      JARVIS_START_MS: '8000',
+    },
+  })
+  let out = ''
+  let err = ''
+  let phase = ''
+  for await (const chunk of child) {
+    if (gen !== listenGen) return undefined // cancelled: leaving the loop ends the recorder
+    if (chunk.stream === 'stderr') {
+      err += chunk.text
+      continue
+    }
+    out += chunk.text
+    const now = /HEARD/.test(out) ? 'heard' : /S\s*$/.test(out) || /\nS/.test(out) ? 'speech' : /READY/.test(out) ? 'ready' : ''
+    if (now !== phase) {
+      phase = now
+      if (now === 'ready') $.ui.status('🎙 JARVIS · listening… (Space to cancel)')
+      if (now === 'speech') $.ui.status('🎙 JARVIS · hearing you…')
+      if (now === 'heard') $.ui.status('⏳ JARVIS · transcribing…')
+    }
+  }
+  if (gen !== listenGen) return undefined
+  isListening = false
+  const result = parseListen(out, err, (await child.result).code ?? 1)
+  void refreshHud($)
+  switch (result.kind) {
+    case 'text':
+      return result.text
+    case 'nospeech':
+      void speak($, `I didn't catch anything, ${o.title}.`, o)
+      return undefined
+    case 'fail': {
+      const models = licenceModels(result.body)
+      if (models.length) {
+        pendingLicences = models
+        const names = models.map(m => `${m.repo_id} (${m.license ?? 'licence'})`).join(', ')
+        $.ui.toast(`VoiceStudio needs these speech-recognition licences accepted: ${names}. Read them in VoiceStudio, then run /jarvis accept-licences.`)
+        void speak($, `${o.title.charAt(0).toUpperCase()}${o.title.slice(1)}, the speech recognition model needs its licence accepted first. I've put the details on screen.`, o)
+      } else {
+        const why = failMessage(result.body)
+        lastError = `voice input: ${why}`
+        $.ui.toast(`JARVIS voice input failed: ${why}`)
+      }
+      return undefined
+    }
+    case 'broken': {
+      const hint = /connect|refused|unable/i.test(result.why) ? ' (is the VoiceStudio app running?)' : ''
+      lastError = `voice input: ${result.why}${hint}`
+      $.ui.toast(`JARVIS voice input failed: ${result.why}${hint}`)
+      $.ui.status('⚠ JARVIS voice input error · /jarvis status')
+      return undefined
+    }
+  }
+}
+
+/** Listen, then send what was said as the next prompt. */
+async function hear($: $, o: Opts, language: string): Promise<void> {
+  const said = await listenOnce($, o, language)
+  if (!said) return
+  void $.prompt.submit({ text: said })
+  void speak($, acknowledgement(o.title), o)
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +454,9 @@ export const register: Register = (on, options) => {
     title: String(options.address_as || 'sir'),
   }
   const autoSend = options.auto_send_dictation !== false
+  const voiceInput = options.voice_input !== false
+  const language = String(options.voice_language ?? 'en').trim()
+
   const safety = options.safety_protocol !== false
   const useLook = options.theme !== false
   const longTaskMs = Math.max(10, Number(options.long_task_seconds ?? 60)) * 1000
@@ -378,8 +466,11 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute',
+      description: 'JARVIS: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences',
     })
+    if (voiceInput) {
+      await $.command.register({ name: 'listen', description: 'JARVIS: speak your next prompt (or tap Space in an empty prompt)' })
+    }
     const result = await next(e)
     void refreshHud($)
     if (useLook) {
@@ -406,6 +497,15 @@ export const register: Register = (on, options) => {
   // empty box) is sent at once, with a short spoken acknowledgement.
   on('prompt.edit', async ($, e, next) => {
     if (e.origin.kind !== 'composer') return next(e)
+    // Space in an empty prompt: start listening, or cancel if already listening.
+    const k = e.key
+    if (voiceInput && k && (k.key === ' ' || k.key === 'space') && !k.ctrl && !k.meta && e.text === '') {
+      const r = await next({ ...e, inputText: '' })
+      if (isListening) cancelListening($)
+      else void hear($, opts, language)
+      return r
+    }
+    if (isListening) cancelListening($)
     stopSpeech()
     const pasted = e.key === undefined ? e.inputText.trim() : ''
     if (autoSend && pasted && e.text.trim() === '' && looksDictated(pasted)) {
@@ -465,6 +565,15 @@ export const register: Register = (on, options) => {
     return r
   }).catch(($, e, next) => next(e))
 
+  on('command.run', { command: 'listen' }, async $ => {
+    if (isListening) {
+      cancelListening($)
+      return { text: 'Stopped listening.' }
+    }
+    void hear($, opts, language)
+    return { text: 'Listening… speak after the beep; I send it when you stop talking.' }
+  })
+
   on('command.run', { command: 'jarvis' }, async ($, e) => {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
     switch ((verb || '').toLowerCase()) {
@@ -504,10 +613,25 @@ export const register: Register = (on, options) => {
             : 'Safety protocol: not on the list; it runs under your normal permissions.',
         }
       }
+      case 'accept-licences':
+      case 'accept-licenses': {
+        if (!pendingLicences.length) return { text: 'No licences are waiting. Try /listen first; if the speech engine needs one, it will say so.' }
+        const done: string[] = []
+        for (const m of pendingLicences) {
+          const r = await $.http.fetch(`${opts.vsUrl.replace(/\/+$/, '')}/models/licenses/accept`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ repo_id: m.repo_id, fingerprint: m.fingerprint, accepted: true }),
+          })
+          done.push(`${m.repo_id}: ${r.ok ? 'accepted' : `failed (${r.status} ${r.text.slice(0, 120)})`}`)
+        }
+        pendingLicences = []
+        return { text: `By accepting, you confirm you have the rights each licence requires for your use.\n${done.join('\n')}\nNow try /listen again.` }
+      }
       case 'status':
         return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute' }
+        return { text: 'Usage: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences' }
     }
   })
 }
