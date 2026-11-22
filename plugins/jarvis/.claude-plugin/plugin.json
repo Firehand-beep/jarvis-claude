@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
-  "version": "0.4.0",
-  "description": "Turns Claude Code into JARVIS: a British AI butler persona that speaks its replies and alerts through local VoiceStudio (or ElevenLabs), with hands-free dictation.",
+  "version": "0.5.0",
+  "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
       "type": "string",
@@ -43,6 +43,24 @@
       "title": "ElevenLabs voice ID",
       "description": "Default: Daniel, a calm British library voice.",
       "default": "YAf0kHlnNFUAy45cwsfF"
+    },
+    "safety_protocol": {
+      "type": "boolean",
+      "title": "Safety protocol",
+      "description": "Ask, out loud, before destructive shell commands: deleting files, force-push, hard reset, dropping data, deploying, publishing.",
+      "default": true
+    },
+    "long_task_seconds": {
+      "type": "number",
+      "title": "Long task alert (seconds)",
+      "description": "Announce and notify when a task takes at least this long.",
+      "default": 60
+    },
+    "theme": {
+      "type": "boolean",
+      "title": "JARVIS look",
+      "description": "Navy and arc-reactor blue theme in the Claude desktop and mobile apps (terminals keep their own colours).",
+      "default": true
     },
     "address_as": {
       "type": "string",

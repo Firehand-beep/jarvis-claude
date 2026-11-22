@@ -1,5 +1,8 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { LOOK } from './look'
+import { riskOf, SHELL_TOOLS } from './protocols'
+
 type $ = EngineInterface
 
 // ---------------------------------------------------------------------------
@@ -252,13 +255,16 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
     isSpeaking = true
     try {
       await synthesizeAndPlay($, line, opts, gen)
-      lastError = undefined
+      if (lastError) {
+        lastError = undefined
+        void refreshHud($)
+      }
       return undefined
     } catch (err) {
       if (gen !== generation) return undefined
       lastError = err instanceof Error ? err.message : String(err)
       $.ui.toast(`JARVIS voice failed: ${lastError}`)
-      $.ui.status('⚠ JARVIS voice error: /jarvis status')
+      $.ui.status('⚠ JARVIS voice error · /jarvis status')
       return lastError
     } finally {
       isSpeaking = false
@@ -266,6 +272,63 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
   })
   queue = run
   return run
+}
+
+// ---------------------------------------------------------------------------
+// HUD (status line) and briefings
+// ---------------------------------------------------------------------------
+
+/** "◉ JARVIS · ctx 34% · 5h 12% · ⎇ main", refreshed at start, after each turn and on mute. */
+async function refreshHud($: $): Promise<void> {
+  if (lastError) return // the error stays up until a line plays again
+  const parts = [`${(await $.store.get(MUTE_KEY)) === true ? '◌' : '◉'} JARVIS`]
+  try {
+    const u = await $.session.usage()
+    if (u.context.percent !== undefined) parts.push(`ctx ${Math.round(u.context.percent)}%`)
+    const window5h = u.rateLimits.find(r => r.kind === 'five_hour')
+    if (window5h) parts.push(`5h ${Math.round(window5h.percentUsed)}%`)
+    else if (u.cost && u.cost.usd > 0) parts.push(`~$${u.cost.usd.toFixed(2)} est.`)
+  } catch {
+    // usage is best effort
+  }
+  try {
+    const wc = await $.vcs.detect({ path: await $.session.cwd() })
+    if (wc?.branch) parts.push(`⎇ ${wc.branch}`)
+  } catch {
+    // not a repository
+  }
+  $.ui.status(parts.join(' · '))
+}
+
+const say = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
+
+/** The spoken start-of-session report: greeting, date on the first session of the day, repo state. */
+async function briefing($: $, title: string): Promise<string> {
+  const now = new Date()
+  const today = now.toDateString()
+  let line = greeting(title)
+  if ((await $.store.get('last_briefing_day')) !== today) {
+    await $.store.set('last_briefing_day', today)
+    const day = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+    line += ` It's ${day}.`
+  }
+  try {
+    const wc = await $.vcs.detect({ path: await $.session.cwd() })
+    if (wc) {
+      const st = await $.vcs.status({ path: wc.root })
+      const n = st.changes?.length ?? 0
+      const branch = wc.branch ? `the ${wc.branch} branch` : 'a detached checkout'
+      line += n ? ` We're on ${branch}, with ${say(n, 'uncommitted change')}.` : ` We're on ${branch}; the working tree is clean.`
+    }
+  } catch {
+    // no repository here: nothing to report
+  }
+  return line
+}
+
+function minutes(ms: number): string {
+  const m = Math.round(ms / 60000)
+  return m <= 1 ? 'about a minute' : `${m} minutes`
 }
 
 /** One line of natural speech, as VoiceStudio dictation pastes it, not code or a URL. */
@@ -306,15 +369,27 @@ export const register: Register = (on, options) => {
     title: String(options.address_as || 'sir'),
   }
   const autoSend = options.auto_send_dictation !== false
+  const safety = options.safety_protocol !== false
+  const useLook = options.theme !== false
+  const longTaskMs = Math.max(10, Number(options.long_task_seconds ?? 60)) * 1000
+  const Title = opts.title.charAt(0).toUpperCase() + opts.title.slice(1)
+  let safetySpokeAt = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS voice: /jarvis stop | test | status | say <text> | mute | unmute',
+      description: 'JARVIS: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute',
     })
     const result = await next(e)
-    $.ui.status('◉ JARVIS')
-    void speak($, greeting(opts.title), opts)
+    void refreshHud($)
+    if (useLook) {
+      try {
+        await $.theme.set(LOOK)
+      } catch (err) {
+        $.ui.log(`jarvis look not set: ${String(err)}`, { to: 'debug' })
+      }
+    }
+    void briefing($, opts.title).then(line => speak($, line, opts))
     return result
   })
 
@@ -342,12 +417,34 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // Speak the opening line of each main-loop reply.
+  // Safety protocol: a destructive shell command is put to the person, out loud, whatever the mode.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (!safety || !SHELL_TOOLS.has(e.tool) || verdict.decision === 'deny') return verdict
+    const command = (e.input as { command?: unknown } | null)?.command
+    const what = typeof command === 'string' ? riskOf(command) : undefined
+    if (!what) return verdict
+    safetySpokeAt = Date.now()
+    void speak($, `${Title}, this command would ${what}. I need your authorisation before I proceed.`, opts)
+    return { decision: 'ask' as const, reason: `JARVIS safety protocol: this command would ${what}.` }
+  }).catch(($, e, next) =>
+    next.called ? next(e) : { decision: 'ask' as const, reason: 'JARVIS safety protocol could not check this command.' },
+  )
+
+  // Speak the opening line of each main-loop reply; announce long tasks finishing.
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    if (e.agentId === undefined && e.reason === 'answer' && e.answer) {
-      void speak($, firstSentence(e.answer), opts)
-    } else if (e.agentId === undefined && e.reason === 'error') {
+    if (e.agentId !== undefined) return r
+    void refreshHud($)
+    if (e.reason === 'answer' && e.answer) {
+      const first = firstSentence(e.answer)
+      if (e.durationMs >= longTaskMs) {
+        void speak($, `Task complete, ${opts.title}, after ${minutes(e.durationMs)}. ${first}`, opts)
+        void $.ui.notify(first || 'Task complete.', { title: 'JARVIS · task complete' }).catch(() => undefined)
+      } else {
+        void speak($, first, opts)
+      }
+    } else if (e.reason === 'error') {
       void speak($, `I'm afraid we've hit an error, ${opts.title}.`, opts)
     }
     return r
@@ -356,6 +453,8 @@ export const register: Register = (on, options) => {
   // Spoken alerts: permission prompts, idle waits.
   on('classic.Notification', async ($, e, next) => {
     const r = await next(e)
+    // The safety protocol has just said it, in its own words.
+    if (Date.now() - safetySpokeAt < 10_000 && /permission/i.test(e.message ?? '')) return r
     const msg = plain(e.message ?? '')
     const line = /permission/i.test(msg)
       ? `${opts.title.charAt(0).toUpperCase()}${opts.title.slice(1)}, I need your authorisation. ${msg}`
@@ -371,11 +470,11 @@ export const register: Register = (on, options) => {
     switch ((verb || '').toLowerCase()) {
       case 'mute':
         await $.store.set(MUTE_KEY, true)
-        $.ui.status('◌ JARVIS (muted)')
+        void refreshHud($)
         return { text: `Muted. I shall keep my thoughts to myself, ${opts.title}.` }
       case 'unmute':
         await $.store.set(MUTE_KEY, false)
-        $.ui.status('◉ JARVIS')
+        void refreshHud($)
         void speak($, `Voice restored, ${opts.title}.`, opts)
         return { text: 'Voice restored.' }
       case 'say':
@@ -385,7 +484,7 @@ export const register: Register = (on, options) => {
       case '': {
         const where = `engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}`
         const err = await speak($, `All systems nominal, ${opts.title}. Voice link is working.`, opts)
-        if (!err) $.ui.status('◉ JARVIS')
+        if (!err) void refreshHud($)
         return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
       }
       case 'stop':
@@ -393,10 +492,22 @@ export const register: Register = (on, options) => {
       case 'shh':
         stopSpeech()
         return { text: 'Stopped speaking.' }
+      case 'brief':
+      case 'briefing':
+        void briefing($, opts.title).then(line => speak($, line, opts))
+        return { text: 'Briefing.' }
+      case 'check': {
+        const what = riskOf(rest.join(' '))
+        return {
+          text: what
+            ? `Safety protocol would ask first: this command would ${what}.`
+            : 'Safety protocol: not on the list; it runs under your normal permissions.',
+        }
+      }
       case 'status':
         return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis stop | test | status | say <text> | mute | unmute' }
+        return { text: 'Usage: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute' }
     }
   })
 }

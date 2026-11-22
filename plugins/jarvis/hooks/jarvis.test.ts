@@ -1,11 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
+import { riskOf } from './protocols'
+
 type Run = { argv: readonly string[]; env: Record<string, string> }
 
 const tick = (ms = 50) => new Promise<void>(r => (globalThis as any).setTimeout(r, ms))
 
 /** A Windows host whose PowerShell children are recorded and finish at once. */
-function windowsHost(on: any, runs: Run[]) {
+function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = []) {
   on('command.register', () => ({ value: { command: 'jarvis' } }))
   on('session.machine', () => ({
     value: { sysname: 'Windows_NT', release: '10.0.22631', machine: 'x86_64', packageManagers: [], runtimes: [] },
@@ -17,7 +19,10 @@ function windowsHost(on: any, runs: Run[]) {
     return { value: { code: 0, signal: null } }
   })
   on('ui.toast', () => ({ value: undefined }))
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.status', (_: unknown, e: any) => {
+    statuses.push(typeof e === 'string' ? e : e?.text)
+    return { value: undefined }
+  })
 }
 
 function decode(argv: readonly string[]): string {
@@ -94,4 +99,56 @@ test('the persona is added to the system prompt', async ($, on) => {
   const r = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
   expect(r.sections.at(-1)?.id).toBe('jarvis:persona')
   expect(r.sections.at(-1)?.text).toContain('"sir"')
+})
+
+
+test('the safety protocol knows destructive commands from everyday ones', async () => {
+  const risky = [
+    'rm -rf build', 'rm -f notes.txt', 'Remove-Item .\\dist -Recurse -Force', 'rd /s /q node_modules',
+    'git push --force origin main', 'git push -f', 'git push origin +main', 'git reset --hard HEAD~3',
+    'git clean -fd', 'git checkout -- .', 'git branch -D feature', 'psql -c "DROP TABLE users"',
+    'sqlite3 app.db "DELETE FROM users;"', 'npm publish', 'vercel --prod', 'terraform destroy',
+    'kubectl delete pod web', 'docker system prune -a', 'Format-Volume -DriveLetter D', 'shutdown /r /t 0',
+  ]
+  const everyday = [
+    'ls', 'git status', 'git push origin main', 'git push -u origin feature', 'git checkout -b new',
+    'npm run build', 'npm run format', 'rm notes.txt', 'Remove-Item notes.txt', 'git reset HEAD file.ts',
+    'psql -c "DELETE FROM users WHERE id = 1"', 'terraform plan', 'kubectl get pods', 'docker ps',
+  ]
+  for (const c of risky) expect([c, riskOf(c) !== undefined]).toEqual([c, true])
+  for (const c of everyday) expect([c, riskOf(c)]).toEqual([c, undefined])
+})
+
+test('a destructive PowerShell command is put to the person; others keep their verdict', async ($, on) => {
+  windowsHost(on, [])
+  on('tool.check', () => ({ decision: 'allow' as const }))
+
+  const risky = await $.tool.check({ tool: 'PowerShell', input: { command: 'Remove-Item C:\\work -Recurse -Force' } } as any)
+  expect(risky.decision).toBe('ask')
+  expect(risky.reason).toContain('delete a folder')
+
+  const calm = await $.tool.check({ tool: 'PowerShell', input: { command: 'Get-ChildItem' } } as any)
+  expect(calm.decision).toBe('allow')
+})
+
+test('session start: HUD shows context, limits and branch; briefing reports the repo', async ($, on) => {
+  const runs: Run[] = []
+  const statuses: (string | undefined)[] = []
+  windowsHost(on, runs, statuses)
+  on('store.set', () => ({ value: undefined }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { window: 200000, tokens: 50000, percent: 25 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12 }] },
+  }))
+  on('vcs.detect', () => ({ vcs: 'git', root: '/work/app', mainRoot: null, revision: 'abc', branch: 'main', defaultBranch: 'main', remote: null }))
+  on('vcs.status', () => ({ changes: [{ path: 'a.ts', state: 'modified' }, { path: 'b.ts', state: 'added' }, { path: 'c.ts', state: 'untracked' }], unpublished: 0 }))
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true } as any)
+  await tick(100)
+
+  expect(statuses.some(t => t === '◉ JARVIS · ctx 25% · 5h 12% · ⎇ main')).toBe(true)
+  const spoken = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string)
+  expect(spoken.some(t => t.includes('the main branch, with 3 uncommitted changes'))).toBe(true)
 })
