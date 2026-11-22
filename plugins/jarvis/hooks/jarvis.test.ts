@@ -9,6 +9,8 @@ type Run = { argv: readonly string[]; env: Record<string, string> }
 
 const tick = (ms = 50) => new Promise<void>(r => (globalThis as any).setTimeout(r, ms))
 
+const registered: string[] = []
+
 /** A Windows host whose PowerShell children are recorded and finish at once. */
 function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = [], recorderSays = '', hotkeySays = 'ARMED\n') {
   on('command.register', () => ({ value: { command: 'jarvis' } }))
@@ -24,6 +26,10 @@ function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = []
   })
   on('ui.toast', () => ({ value: undefined }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('tool.register', (_: unknown, e: any) => {
+    registered.push(e.name)
+    return { value: { tool: `mcp__jarvis__${e.name}` } }
+  })
   on('ui.status', (_: unknown, e: any) => {
     statuses.push(typeof e === 'string' ? e : e?.text)
     return { value: undefined }
@@ -102,8 +108,9 @@ test('pasted code or a URL is left in the box', async ($, on) => {
 test('the persona is added to the system prompt', async ($, on) => {
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'hi', scope: 'shared' as const }] }))
   const r = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
-  expect(r.sections.at(-1)?.id).toBe('jarvis:persona')
-  expect(r.sections.at(-1)?.text).toContain('"sir"')
+  const persona = r.sections.find((x: { id: string }) => x.id === 'jarvis:persona')
+  expect(persona?.text).toContain('"sir"')
+  expect(r.sections.map((x: { id: string }) => x.id)).toEqual(expect.arrayContaining(['jarvis:persona', 'jarvis:knowledge', 'jarvis:memory']))
 })
 
 
@@ -309,4 +316,99 @@ test('ElevenLabs request: Grandfather Joe by default, PCM on Windows', { options
   expect(r?.env.JARVIS_URL).toBe('https://api.elevenlabs.io/v1/text-to-speech/0lp4RIz96WD1RUtvEu3Q?output_format=pcm_24000')
   expect(r?.env.JARVIS_EXT).toBe('pcm')
   expect(r?.env.JARVIS_HDR_NAME).toBe('xi-api-key')
+})
+
+/** A small in-memory disk for the memory tests: path -> text. */
+function fakeDisk(on: any, files: Map<string, string>) {
+  on('env.get', (_: unknown, e: any) => ({ value: e.name === 'USERPROFILE' ? 'C:\\Users\\Tester' : undefined }))
+  on('fs.exists', (_: unknown, e: any) => ({ value: files.has(e.path) || [...files.keys()].some(k => k.startsWith(`${e.path}/`)) }))
+  on('fs.read', (_: unknown, e: any) => ({ value: files.get(e.path) ?? '' }))
+  on('fs.write', (_: unknown, e: any) => {
+    files.set(e.path, e.text)
+    return { value: undefined }
+  })
+  on('fs.list', (_: unknown, e: any) => ({
+    value: [...files.keys()]
+      .filter(k => k.startsWith(`${e.path}/`))
+      .map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 1, isLink: false })),
+  }))
+}
+
+const ROOT = 'C:\\Users\\Tester/Alfred'
+
+test('memory: the remember tool keeps a dated note; each exchange goes into the day\'s journal', async ($: any, on: any) => {
+  const files = new Map<string, string>()
+  windowsHost(on, [])
+  fakeDisk(on, files)
+  on('store.set', () => ({ value: undefined }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  on('turn.start', (_: unknown, e: any) => ({ text: e.text, turnId: e.turnId }))
+  on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
+  on('tool.run', () => ({ result: 'engine' }))
+
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await tick(100)
+  expect(registered).toEqual(expect.arrayContaining(['weather', 'remember', 'recall']))
+
+  const r = await $.tool.run({ tool: 'mcp__jarvis__remember', note: 'Prefers pnpm over npm.', tool_use_id: 'u1' })
+  expect(String(r.result)).toContain('Noted')
+  const notesPath = [...files.keys()].find(k => k.endsWith('/Alfred/memory.md')) ?? ''
+  expect(notesPath).toContain('Tester')
+  expect(files.get(notesPath)).toMatch(/- \d{4}-\d{2}-\d{2}: Prefers pnpm over npm\./)
+
+  await $.turn.start({ text: 'Which package manager do I like?', turnId: 't1' })
+  await $.turn.complete({ answer: 'pnpm, sir. You said so.', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' })
+  await tick(100)
+  const day = [...files.keys()].find(k => k.includes('/Alfred/conversations/'))
+  expect(files.get(day ?? '')).toContain('**You:** Which package manager do I like?')
+  expect(files.get(day ?? '')).toContain('**Alfred:** pnpm, sir. You said so.')
+
+  const found = await $.tool.run({ tool: 'mcp__jarvis__recall', query: 'package manager', tool_use_id: 'u2' })
+  expect(String(found.result)).toContain('Which package manager do I like?')
+})
+
+test('memory: forget needs "yes"; edits and deletes of the memory folder are put to the person', async ($: any, on: any) => {
+  const files = new Map<string, string>([[`${ROOT}/memory.md`, '# notes\n- 2026-11-22: x\n']])
+  const runs: Run[] = []
+  windowsHost(on, runs)
+  fakeDisk(on, files)
+  on('store.set', () => ({ value: undefined }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  on('tool.check', () => ({ decision: 'allow' as const }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await tick(100)
+
+  const del = await $.tool.check({ tool: 'PowerShell', input: { command: 'Remove-Item C:\\Users\\Tester\\Alfred\\memory.md' } })
+  expect(del.decision).toBe('ask')
+  const edit = await $.tool.check({ tool: 'Write', input: { file_path: 'C:\\Users\\Tester\\Alfred\\memory.md', content: '' } })
+  expect(edit.decision).toBe('ask')
+  const read = await $.tool.check({ tool: 'PowerShell', input: { command: 'Get-Content C:\\Users\\Tester\\Alfred\\memory.md' } })
+  expect(read.decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'mcp__jarvis__remember', input: { note: 'x' } })).decision).toBe('allow')
+})
+
+test('weather: Open-Meteo lookup by place, as a short report', async ($: any, on: any) => {
+  windowsHost(on, [])
+  on('tool.run', () => ({ result: 'engine' }))
+  on('http.fetch', (_: unknown, e: any) => {
+    const text = e.url.includes('geocoding')
+      ? JSON.stringify({ results: [{ name: 'Singapore', country: 'Singapore', latitude: 1.29, longitude: 103.85 }] })
+      : JSON.stringify({
+          current: { temperature_2m: 31.2, apparent_temperature: 37, relative_humidity_2m: 70, weather_code: 2, wind_speed_10m: 12, precipitation: 0 },
+          daily: { time: ['2026-11-22'], weather_code: [95], temperature_2m_max: [32], temperature_2m_min: [25], precipitation_probability_max: [80], sunrise: ['2026-11-22T06:55'], sunset: ['2026-11-22T19:00'] },
+        })
+    return { value: { status: 200, ok: true, headers: {}, text } }
+  })
+  const r = await $.tool.run({ tool: 'mcp__jarvis__weather', place: 'Singapore', tool_use_id: 'w1' })
+  expect(String(r.result)).toContain('Now: 31°C (feels like 37°C), partly cloudy')
+  expect(String(r.result)).toContain('Today (2026-11-22): thunderstorms, 25–32°C, chance of rain 80%')
 })

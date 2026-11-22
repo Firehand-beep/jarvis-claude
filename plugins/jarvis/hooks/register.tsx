@@ -4,6 +4,20 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { HubState, MicPhase } from '../types'
 
 import { HOTKEY_ENCODED, parseHotkey } from './hotkey'
+import { forecastUrl, geocodeUrl, knowledgeSection, placeFrom, weatherReport } from './knowledge'
+import {
+  dayStamp,
+  JOURNAL_DIR,
+  journalEntry,
+  journalHeader,
+  memorySection,
+  NOTES_FILE,
+  noteLine,
+  notesHeader,
+  recentEntries,
+  searchJournal,
+  touchesMemory,
+} from './memory'
 import type { Hotkey } from './hotkey'
 import { failMessage, LISTEN_ENCODED, licenceModels, parseListen } from './listen'
 import { LOOK } from './look'
@@ -504,6 +518,136 @@ export function isTalkKey(
   return mode === 'none' ? false : mode === 'space' ? space : mode === 'ctrl+space' ? ctrlSpace : ctrlSpace || space
 }
 
+
+// ---------------------------------------------------------------------------
+// Memory: ~/Alfred (notes + a full daily journal). Only /alfred forget … yes ever deletes it.
+// ---------------------------------------------------------------------------
+
+let memFolder: string | undefined
+let memFolderShown: string | undefined
+let memNotes = ''
+let memRecent: string[] = []
+const pendingPrompts = new Map<string, string>()
+
+async function memoryFolder($: $): Promise<string> {
+  if (memFolder) return memFolder
+  const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '.'
+  memFolder = `${home.replace(/[\\/]+$/, '')}/Alfred`
+  return memFolder
+}
+
+/** The folder as the person would type it on their system. */
+async function memoryFolderShown($: $): Promise<string> {
+  const f = await memoryFolder($)
+  return (await onWindows($)) ? f.replace(/\//g, '\\') : f
+}
+
+async function readText($: $, path: string): Promise<string> {
+  try {
+    return (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Journal files, newest first. */
+async function journalDays($: $): Promise<string[]> {
+  const dir = `${await memoryFolder($)}/${JOURNAL_DIR}`
+  try {
+    if (!(await $.fs.exists(dir))) return []
+    return (await $.fs.list(dir))
+      .map(f => f.name)
+      .filter(n => /^\d{4}-\d{2}-\d{2}\.md$/.test(n))
+      .sort()
+      .reverse()
+  } catch {
+    return []
+  }
+}
+
+/** Reads the notes and the latest exchanges into the cache the prompt uses. */
+async function loadMemory($: $): Promise<void> {
+  const folder = await memoryFolder($)
+  memNotes = await readText($, `${folder}/${NOTES_FILE}`)
+  if (memNotes.length > 12000) memNotes = `…\n${memNotes.slice(-12000)}`
+  const recent: string[] = []
+  for (const file of (await journalDays($)).slice(0, 2)) {
+    const day = file.replace(/\.md$/, '')
+    recent.unshift(...recentEntries(await readText($, `${folder}/${JOURNAL_DIR}/${file}`), day, 10))
+    if (recent.length >= 10) break
+  }
+  memRecent = recent.slice(-10)
+}
+
+async function appendJournal($: $, said: string, answer: string): Promise<void> {
+  const now = new Date()
+  const day = dayStamp(now)
+  const path = `${await memoryFolder($)}/${JOURNAL_DIR}/${day}.md`
+  const before = (await readText($, path)) || journalHeader(NAME, day)
+  await $.fs.write(path, before + journalEntry(NAME, now, said, answer))
+}
+
+async function rememberNote($: $, note: string): Promise<string> {
+  const clean = note.replace(/\s+/g, ' ').trim()
+  if (!clean) return 'Nothing to remember: the note was empty.'
+  const path = `${await memoryFolder($)}/${NOTES_FILE}`
+  const before = (await readText($, path)) || notesHeader(NAME)
+  await $.fs.write(path, `${before.replace(/\n*$/, '\n')}${noteLine(clean, new Date())}\n`)
+  await loadMemory($)
+  return `Noted in ${NOTES_FILE}.`
+}
+
+async function recallJournal($: $, query: string): Promise<string> {
+  const folder = await memoryFolder($)
+  const found: string[] = []
+  let size = 0
+  for (const file of await journalDays($)) {
+    const day = file.replace(/\.md$/, '')
+    for (const hit of searchJournal(await readText($, `${folder}/${JOURNAL_DIR}/${file}`), day, query).reverse()) {
+      const piece = hit.length > 1500 ? `${hit.slice(0, 1500)}…` : hit
+      if (size + piece.length > 9000) break
+      found.push(piece)
+      size += piece.length
+    }
+    if (size > 9000) break
+  }
+  const notes = memNotes
+    .split('\n')
+    .filter(l => l.startsWith('- ') && query.toLowerCase().split(/\s+/).filter(w => w.length > 1).every(w => l.toLowerCase().includes(w)))
+  if (!found.length && !notes.length) return `Nothing in the journal or the notes mentions "${query}". Try fewer or different words.`
+  return [notes.length ? `Notes:\n${notes.join('\n')}` : '', found.length ? `Journal (newest first):\n\n${found.join('\n\n---\n\n')}` : '']
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/** The weather tool: Open-Meteo, looked up by place name. */
+async function weatherFor($: $, place: string): Promise<string> {
+  if (!place.trim()) return 'No place given, and no home city is set. Ask which city, then remember it.'
+  const geo = await $.http.fetch(geocodeUrl(place.trim()))
+  if (!geo.ok) return `The weather service could not look up "${place}" (HTTP ${geo.status}).`
+  const where = placeFrom(geo.text)
+  if (!where) return `No place called "${place}" was found. Try the city's English name, or add the country.`
+  const fc = await $.http.fetch(forecastUrl(where.latitude, where.longitude))
+  if (!fc.ok) return `The weather service did not answer for ${where.name} (HTTP ${fc.status}).`
+  return weatherReport(where, fc.text)
+}
+
+/** Deletes part of the memory; reached only from /alfred forget … yes. */
+async function forgetMemory($: $, what: 'notes' | 'conversations' | 'everything'): Promise<string> {
+  const folder = await memoryFolder($)
+  const target = what === 'notes' ? `${folder}/${NOTES_FILE}` : what === 'conversations' ? `${folder}/${JOURNAL_DIR}` : folder
+  if (!(await $.fs.exists(target))) return `There was nothing to forget: ${target} does not exist.`
+  const r = (await onWindows($))
+    ? await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'Remove-Item -LiteralPath $env:ALFRED_TARGET -Recurse -Force'], {
+        env: { ALFRED_TARGET: target },
+      })
+    : await $.process.run(['rm', '-r', '-f', '--', target])
+  memNotes = what === 'conversations' ? memNotes : ''
+  memRecent = what === 'notes' ? memRecent : []
+  await loadMemory($)
+  return r.exitCode === 0 ? `Forgotten: ${what}.` : `Could not forget ${what}: ${r.stderr.trim().slice(0, 200)}`
+}
+
 // ---------------------------------------------------------------------------
 // HUD (status line) and briefings
 // ---------------------------------------------------------------------------
@@ -602,6 +746,8 @@ export const register: Register = (on, options) => {
   }
   NAME = String(options.assistant_name || 'Alfred').trim() || 'Alfred'
   const autoSend = options.auto_send_dictation !== false
+  const useMemory = options.memory !== false
+  const homeCity = String(options.home_city ?? '').trim()
   const voiceInput = options.voice_input !== false
   const showHub = options.hub !== false
   const talkSpec = String(options.talk_key || 'ctrl+space').trim().toLowerCase()
@@ -618,12 +764,38 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: `${NAME}: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences (also /alfred)`,
+      description: `${NAME}: /jarvis hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences (also /alfred)`,
     })
     await $.command.register({
       name: 'alfred',
-      description: `${NAME}: /alfred hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
+      description: `${NAME}: /alfred hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
     })
+    await $.tool.register({
+      name: 'weather',
+      description: `Current weather and a 3-day forecast for a place (Open-Meteo). Use it for any weather question instead of a web search.${homeCity ? ` No place given means ${homeCity}.` : ''}`,
+      inputSchema: { type: 'object', properties: { place: { type: 'string', description: 'A city or town, e.g. "Singapore" or "Paris, France".' } } },
+      isDeferred: false,
+    })
+    if (useMemory) {
+      await $.tool.register({
+        name: 'remember',
+        description: `Save one short, self-contained note to ${NAME}'s long-term memory (memory.md on the person's computer): a preference, a fact about them or their work, a decision, a project, a person. Use it whenever they tell you something worth keeping or ask you to remember something.`,
+        inputSchema: { type: 'object', properties: { note: { type: 'string', description: 'The note, one sentence, understandable on its own later.' } }, required: ['note'] },
+        isDeferred: false,
+      })
+      await $.tool.register({
+        name: 'recall',
+        description: `Search ${NAME}'s memory: the notes and the full journal of past conversations with the person. Use it when they refer to anything earlier (what was decided, said, done, last week, before). Returns matching notes and journal entries, newest first.`,
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'A few key words to look for, e.g. "hub design" or "pnpm".' } }, required: ['query'] },
+        isDeferred: false,
+      })
+      try {
+        memFolderShown = await memoryFolderShown($)
+        await loadMemory($)
+      } catch (err) {
+        $.ui.log(`memory: not loaded: ${String(err)}`, { to: 'debug' })
+      }
+    }
     if (voiceInput) {
       await $.command.register({ name: 'listen', description: `${NAME}: speak your next prompt (or press Ctrl+Space)` })
     }
@@ -647,7 +819,14 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     return {
       ...r,
-      sections: [...r.sections, { id: 'jarvis:persona', text: persona(opts.title, NAME), scope: 'session' as const }],
+      sections: [
+        ...r.sections,
+        { id: 'jarvis:persona', text: persona(opts.title, NAME), scope: 'session' as const },
+        { id: 'jarvis:knowledge', text: knowledgeSection(NAME, opts.title, homeCity), scope: 'session' as const },
+        ...(useMemory
+          ? [{ id: 'jarvis:memory', text: memorySection(NAME, opts.title, memFolderShown ?? '~/Alfred', memNotes, memRecent), scope: 'session' as const }]
+          : []),
+      ],
     }
   })
 
@@ -676,8 +855,20 @@ export const register: Register = (on, options) => {
 
   // Safety protocol: a destructive shell command is put to the person, out loud, whatever the mode.
   on('tool.check', async ($, e, next) => {
+    if (e.tool === 'mcp__jarvis__remember' || e.tool === 'mcp__jarvis__recall' || e.tool === 'mcp__jarvis__weather') return { decision: 'allow' as const }
     const verdict = await next(e)
-    if (!safety || !SHELL_TOOLS.has(e.tool) || verdict.decision === 'deny') return verdict
+    if (verdict.decision === 'deny') return verdict
+    if (useMemory && memFolder) {
+      const input = (e.input ?? {}) as Record<string, unknown>
+      const filePath = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
+      const editsMemory = /^(Write|Edit|MultiEdit|NotebookEdit)$/.test(e.tool) && filePath !== '' && touchesMemory(filePath, memFolder)
+      const shell = SHELL_TOOLS.has(e.tool) && typeof input.command === 'string' ? input.command : ''
+      const shellHitsMemory = shell !== '' && touchesMemory(shell, memFolder) && /\b(Remove-Item|rm|del|erase|rd|rmdir|Clear-Content|Set-Content|Out-File|Move-Item|mv|move|ren|Rename-Item|truncate)\b|>/i.test(shell)
+      if (editsMemory || shellHitsMemory) {
+        return { decision: 'ask' as const, reason: `${NAME}'s memory is only changed when you ask: this would edit or delete files in ${memFolderShown ?? memFolder}.` }
+      }
+    }
+    if (!safety || !SHELL_TOOLS.has(e.tool)) return verdict
     const command = (e.input as { command?: unknown } | null)?.command
     const what = typeof command === 'string' ? riskOf(command) : undefined
     if (!what) return verdict
@@ -689,8 +880,30 @@ export const register: Register = (on, options) => {
     next.called ? next(e) : { decision: 'ask' as const, reason: `${NAME}'s safety protocol could not check this command.` },
   )
 
+  on('tool.run', { tool: 'mcp__jarvis__weather' }, async ($, e) => {
+    const place = String((e as unknown as { place?: unknown }).place ?? '') || homeCity
+    try {
+      return { result: await weatherFor($, place) }
+    } catch (err) {
+      return { result: `The weather service could not be reached: ${String(err).slice(0, 200)}` }
+    }
+  })
+
+  on('tool.run', { tool: 'mcp__jarvis__remember' }, async ($, e) => {
+    const note = String((e as unknown as { note?: unknown }).note ?? '')
+    return { result: await rememberNote($, note) }
+  })
+
+  on('tool.run', { tool: 'mcp__jarvis__recall' }, async ($, e) => {
+    const query = String((e as unknown as { query?: unknown }).query ?? '')
+    return { result: await recallJournal($, query) }
+  })
+
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) hubSet($, st => ({ ...st, working: true, turnStartedAt: Date.now() }))
+    if (e.agentId === undefined) {
+      hubSet($, st => ({ ...st, working: true, turnStartedAt: Date.now() }))
+      if (useMemory && e.text.trim()) pendingPrompts.set(e.turnId, e.text)
+    }
     return next(e)
   })
 
@@ -700,6 +913,13 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return r
     hubSet($, st => ({ ...st, working: false, lastTaskMs: e.durationMs }))
     void refreshHud($)
+    const said = pendingPrompts.get(e.turnId)
+    pendingPrompts.delete(e.turnId)
+    if (useMemory && said && e.answer) {
+      void appendJournal($, said, e.answer)
+        .then(() => loadMemory($))
+        .catch(err => $.ui.log(`memory: journal not written: ${String(err)}`, { to: 'debug' }))
+    }
     if (e.reason === 'answer' && e.answer) {
       const first = firstSentence(e.answer)
       if (e.durationMs >= longTaskMs) {
@@ -937,6 +1157,23 @@ export const register: Register = (on, options) => {
             : `${NAME} Hub opened. In the Claude desktop app it sits in the panel on the right; some terminals do not show panels.`,
         }
       }
+      case 'memory': {
+        const folder = await memoryFolderShown($)
+        const days = await journalDays($)
+        const notes = memNotes.split('\n').filter(l => l.startsWith('- ')).length
+        return {
+          text: `${NAME}'s memory: ${folder}\n${notes} note${notes === 1 ? '' : 's'} in ${NOTES_FILE}; ${days.length} day${days.length === 1 ? '' : 's'} of conversations in ${JOURNAL_DIR}\\.${days[0] ? ` Latest: ${days[0]}.` : ''}\nTo clear it: /alfred forget notes|conversations|everything yes`,
+        }
+      }
+      case 'forget': {
+        const what = (rest[0] ?? '').toLowerCase()
+        const sure = (rest[1] ?? '').toLowerCase() === 'yes'
+        if (what !== 'notes' && what !== 'conversations' && what !== 'everything') {
+          return { text: `Usage: /${e.command} forget notes|conversations|everything yes\nnotes: ${NOTES_FILE}; conversations: the daily journal; everything: the whole memory folder. Nothing is deleted without "yes".` }
+        }
+        if (!sure) return { text: `This permanently deletes ${NAME}'s ${what === 'everything' ? 'entire memory' : what}. To confirm, run: /${e.command} forget ${what} yes` }
+        return { text: await forgetMemory($, what) }
+      }
       case 'brief':
       case 'briefing':
         void briefing($, opts.title).then(line => speak($, line, opts))
@@ -967,7 +1204,7 @@ export const register: Register = (on, options) => {
       case 'status':
         return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: `Usage: /${e.command} hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences` }
+        return { text: `Usage: /${e.command} hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences` }
     }
   })
 }

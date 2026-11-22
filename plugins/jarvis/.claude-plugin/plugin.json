@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {
@@ -8,6 +8,18 @@
       "title": "Assistant name",
       "description": "What the assistant is called, in what he says, the status line and the Hub.",
       "default": "Alfred"
+    },
+    "memory": {
+      "type": "boolean",
+      "title": "Memory",
+      "description": "Keep notes and a full daily journal of your conversations in the Alfred folder in your user folder, and read them at the start of each session. Only /alfred forget \u2026 yes deletes them.",
+      "default": true
+    },
+    "home_city": {
+      "type": "string",
+      "title": "Home city",
+      "description": "Where \"the weather\" means when no place is given, e.g. Singapore. Leave empty and Alfred asks once, then remembers.",
+      "default": ""
     },
     "provider": {
       "type": "string",
@@ -100,5 +112,13 @@
     }
   },
   "license": "MIT",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "network": {
+    "hosts": [
+      "127.0.0.1",
+      "api.elevenlabs.io",
+      "geocoding-api.open-meteo.com",
+      "api.open-meteo.com"
+    ]
+  }
 }
