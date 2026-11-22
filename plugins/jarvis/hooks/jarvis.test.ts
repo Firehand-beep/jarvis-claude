@@ -12,12 +12,16 @@ const tick = (ms = 50) => new Promise<void>(r => (globalThis as any).setTimeout(
 const registered: string[] = []
 
 /** A Windows host whose PowerShell children are recorded and finish at once. */
-function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = [], recorderSays = '', hotkeySays = 'ARMED\n') {
+function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = [], recorderSays = '', hotkeySays = 'ARMED\n', store?: Map<string, unknown>) {
   on('command.register', () => ({ value: { command: 'jarvis' } }))
   on('session.machine', () => ({
     value: { sysname: 'Windows_NT', release: '10.0.22631', machine: 'x86_64', packageManagers: [], runtimes: [] },
   }))
-  on('store.get', () => ({ value: undefined }))
+  on('store.get', (_: unknown, e: any) => ({ value: store?.get(e.key) }))
+  if (store) on('store.set', (_: unknown, e: any) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
   on('process.spawn', async function* (_: unknown, e: { argv: readonly string[]; env?: Record<string, string> }) {
     runs.push({ argv: e.argv, env: e.env ?? {} })
     // The voice recorder is the child given a JARVIS_MAX_MS; speech playback the others.
@@ -411,4 +415,26 @@ test('weather: Open-Meteo lookup by place, as a short report', async ($: any, on
   const r = await $.tool.run({ tool: 'mcp__jarvis__weather', place: 'Singapore', tool_use_id: 'w1' })
   expect(String(r.result)).toContain('Now: 31°C (feels like 37°C), partly cloudy')
   expect(String(r.result)).toContain('Today (2026-11-22): thunderstorms, 25–32°C, chance of rain 80%')
+})
+
+test('a restart of the plugin mid-session does not greet again, and finishes the line it cut off', async ($: any, on: any) => {
+  const runs: Run[] = []
+  const store = new Map<string, unknown>([
+    ['greeted_session', 's-1'],
+    ['playing', { text: 'Tomorrow in Singapore will be warm and humid, sir.', at: Date.now() - 5000 }],
+  ])
+  windowsHost(on, runs, [], '', 'ARMED\n', store)
+  on('session.id', () => ({ value: 's-1' }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('env.get', () => ({ value: undefined }))
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await tick(150)
+  const said = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string).filter(Boolean)
+  expect(said.some(t => /Good (morning|afternoon|evening)|Up rather late/.test(t))).toBe(false)
+  expect(said).toContain('Tomorrow in Singapore will be warm and humid, sir.')
 })

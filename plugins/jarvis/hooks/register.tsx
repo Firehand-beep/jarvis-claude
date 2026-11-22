@@ -70,6 +70,10 @@ content stays exact and complete, the manner stays yours.`
 // ---------------------------------------------------------------------------
 
 const MUTE_KEY = 'muted'
+/** The line being spoken, until it has played: { text, at }. */
+const PLAYING_KEY = 'playing'
+/** The session JARVIS last greeted, so a restart of the plugin mid-session stays quiet. */
+const GREETED_KEY = 'greeted_session'
 const MAX_SPOKEN = 400
 
 // ---------------------------------------------------------------------------
@@ -322,8 +326,11 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
     isSpeaking = true
     hubSet($, st => ({ ...st, speaking: true }))
     hubLog($, 'jarvis', line)
+    // Kept until the line has played, so a plugin restart mid-sentence can say it again.
+    await $.store.set(PLAYING_KEY, { text: line, at: Date.now() }).catch(() => undefined)
     try {
       await synthesizeAndPlay($, line, opts, gen)
+      await $.store.set(PLAYING_KEY, null).catch(() => undefined)
       if (lastError) {
         lastError = undefined
         void refreshHud($)
@@ -810,7 +817,18 @@ export const register: Register = (on, options) => {
         $.ui.log(`jarvis look not set: ${String(err)}`, { to: 'debug' })
       }
     }
-    void briefing($, opts.title).then(line => speak($, line, opts))
+    // Greet once per session: a restart of the plugin (an update, a settings change) is not a new
+    // session. After a restart, finish the line that was cut off, if it was cut off just now.
+    const sessionId = await $.session.id().catch(() => '')
+    const greeted = (await $.store.get(GREETED_KEY)) === sessionId && sessionId !== ''
+    if (!greeted) {
+      await $.store.set(GREETED_KEY, sessionId)
+      await $.store.set(PLAYING_KEY, null)
+      void briefing($, opts.title).then(line => speak($, line, opts))
+    } else {
+      const cut = (await $.store.get(PLAYING_KEY)) as { text?: string; at?: number } | null | undefined
+      if (cut?.text && typeof cut.at === 'number' && Date.now() - cut.at < 60_000) void speak($, cut.text, opts)
+    }
     return result
   })
 
