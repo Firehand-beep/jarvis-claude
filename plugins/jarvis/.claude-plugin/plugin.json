@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
@@ -34,8 +34,19 @@
     "voice_input": {
       "type": "boolean",
       "title": "Voice input",
-      "description": "Tap Space in an empty prompt (or run /listen) to speak a prompt: JARVIS records until you stop talking and VoiceStudio transcribes it locally.",
+      "description": "Press the talk key (or run /listen) to speak a prompt: JARVIS records until you stop talking and VoiceStudio transcribes it locally.",
       "default": true
+    },
+    "talk_key": {
+      "type": "string",
+      "title": "Talk key",
+      "description": "ctrl+space: works any time; with a draft in the box, what you say is added to it. space: Space in an empty prompt. both: either.",
+      "options": [
+        "ctrl+space",
+        "space",
+        "both"
+      ],
+      "default": "ctrl+space"
     },
     "voice_language": {
       "type": "string",

@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { licenceModels, parseListen } from './listen'
+import { isTalkKey } from './register'
 import { riskOf } from './protocols'
 
 type Run = { argv: readonly string[]; env: Record<string, string> }
@@ -168,7 +169,7 @@ test('the recorder output is read: text, silence, licence, failure', () => {
   expect(parseListen('', 'Exception calling "Record": Could not open the microphone (waveInOpen error 2).', 1).kind).toBe('broken')
 })
 
-test('Space in an empty prompt listens, then sends what was said', async ($, on) => {
+test('Ctrl+Space listens, then sends what was said', async ($, on) => {
   const runs: Run[] = []
   const submitted: string[] = []
   windowsHost(on, runs, [], `READY\nS\nHEARD\nTEXT ${b64('{"text":"What files are in this folder?"}')}\n`)
@@ -179,11 +180,11 @@ test('Space in an empty prompt listens, then sends what was said', async ($, on)
   })
 
   const r = await ($.prompt as any).edit({
-    origin: { kind: 'composer' }, key: { key: ' ' }, text: '', cursor: 0, start: 0, end: 0, inputText: ' ',
+    origin: { kind: 'composer' }, key: { key: ' ', ctrl: true }, text: '', cursor: 0, start: 0, end: 0, inputText: ' ',
   })
   await tick(100)
 
-  expect(r.text).toBe('') // the space is swallowed
+  expect(r.text).toBe('') // the key is swallowed
   const recorder = runs.find(x => x.env.JARVIS_MAX_MS)
   expect(recorder?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/transcriptions')
   expect(recorder?.env.JARVIS_LANG).toBe('en')
@@ -191,7 +192,7 @@ test('Space in an empty prompt listens, then sends what was said', async ($, on)
   expect(submitted).toEqual(['What files are in this folder?'])
 })
 
-test('a space typed after text is just a space', async ($, on) => {
+test('plain Space is just a space under the default talk key', async ($, on) => {
   const runs: Run[] = []
   windowsHost(on, runs)
   on('prompt.edit', (_, e) => ({ text: e.text + e.inputText, cursor: 0 }))
@@ -200,4 +201,16 @@ test('a space typed after text is just a space', async ($, on) => {
   })
   expect(r.text).toBe('hello ')
   expect(runs.some(x => x.env.JARVIS_MAX_MS)).toBe(false)
+})
+
+test('the talk key: every form of Ctrl+Space, and Space only where chosen', () => {
+  const at = (key: any, text = '', inputText = ' ') => ({ key, text, inputText })
+  expect(isTalkKey(at({ key: ' ', ctrl: true }), 'ctrl+space')).toBe(true)
+  expect(isTalkKey(at({ key: '@', ctrl: true }), 'ctrl+space')).toBe(true)
+  expect(isTalkKey(at(undefined, '', '\u0000'), 'ctrl+space')).toBe(true)
+  expect(isTalkKey(at({ key: ' ', ctrl: true }, 'draft'), 'ctrl+space')).toBe(true)
+  expect(isTalkKey(at({ key: ' ' }), 'ctrl+space')).toBe(false)
+  expect(isTalkKey(at({ key: ' ' }), 'space')).toBe(true)
+  expect(isTalkKey(at({ key: ' ' }, 'draft'), 'space')).toBe(false)
+  expect(isTalkKey(at({ key: 'a', ctrl: true }), 'both')).toBe(false)
 })

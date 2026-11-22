@@ -312,7 +312,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     const now = /HEARD/.test(out) ? 'heard' : /S\s*$/.test(out) || /\nS/.test(out) ? 'speech' : /READY/.test(out) ? 'ready' : ''
     if (now !== phase) {
       phase = now
-      if (now === 'ready') $.ui.status('🎙 JARVIS · listening… (Space to cancel)')
+      if (now === 'ready') $.ui.status('🎙 JARVIS · listening… (Ctrl+Space or any key to cancel)')
       if (now === 'speech') $.ui.status('🎙 JARVIS · hearing you…')
       if (now === 'heard') $.ui.status('⏳ JARVIS · transcribing…')
     }
@@ -351,12 +351,38 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
   }
 }
 
-/** Listen, then send what was said as the next prompt. */
-async function hear($: $, o: Opts, language: string): Promise<void> {
+/**
+ * Listen, then send what was said as the next prompt; with a draft already in the box,
+ * add it to the draft instead, so it can be finished by hand.
+ */
+async function hear($: $, o: Opts, language: string, intoDraft = false): Promise<void> {
   const said = await listenOnce($, o, language)
   if (!said) return
+  if (intoDraft) {
+    await $.prompt.fill({ text: ` ${said}`, mode: 'append' })
+    return
+  }
   void $.prompt.submit({ text: said })
   void speak($, acknowledgement(o.title), o)
+}
+
+export type TalkKey = 'ctrl+space' | 'space' | 'both'
+
+/**
+ * Whether this edit is the talk key. Terminals send Ctrl+Space as NUL, which reaches the
+ * prompt as a ctrl-marked space, a bare NUL, or ctrl+@ depending on the terminal; all count.
+ * Plain Space counts only in an empty prompt, where a leading space is useless anyway.
+ */
+export function isTalkKey(
+  e: { key?: { key: string; ctrl?: true; meta?: true }; inputText: string; text: string },
+  mode: TalkKey,
+): boolean {
+  const k = e.key
+  const ctrlSpace =
+    e.inputText === '\u0000' ||
+    (k !== undefined && (k.key === '\u0000' || (k.ctrl === true && (k.key === ' ' || k.key === 'space' || k.key === '@' || k.key === ''))))
+  const space = k !== undefined && (k.key === ' ' || k.key === 'space') && !k.ctrl && !k.meta && e.text === ''
+  return mode === 'space' ? space : mode === 'ctrl+space' ? ctrlSpace : ctrlSpace || space
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +481,7 @@ export const register: Register = (on, options) => {
   }
   const autoSend = options.auto_send_dictation !== false
   const voiceInput = options.voice_input !== false
+  const talkKey: TalkKey = options.talk_key === 'space' || options.talk_key === 'both' ? options.talk_key : 'ctrl+space'
   const language = String(options.voice_language ?? 'en').trim()
 
   const safety = options.safety_protocol !== false
@@ -469,7 +496,7 @@ export const register: Register = (on, options) => {
       description: 'JARVIS: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences',
     })
     if (voiceInput) {
-      await $.command.register({ name: 'listen', description: 'JARVIS: speak your next prompt (or tap Space in an empty prompt)' })
+      await $.command.register({ name: 'listen', description: 'JARVIS: speak your next prompt (or press Ctrl+Space)' })
     }
     const result = await next(e)
     void refreshHud($)
@@ -497,12 +524,11 @@ export const register: Register = (on, options) => {
   // empty box) is sent at once, with a short spoken acknowledgement.
   on('prompt.edit', async ($, e, next) => {
     if (e.origin.kind !== 'composer') return next(e)
-    // Space in an empty prompt: start listening, or cancel if already listening.
-    const k = e.key
-    if (voiceInput && k && (k.key === ' ' || k.key === 'space') && !k.ctrl && !k.meta && e.text === '') {
+    // The talk key (Ctrl+Space by default): start listening, or cancel if already listening.
+    if (voiceInput && isTalkKey(e, talkKey)) {
       const r = await next({ ...e, inputText: '' })
       if (isListening) cancelListening($)
-      else void hear($, opts, language)
+      else void hear($, opts, language, e.text.trim() !== '')
       return r
     }
     if (isListening) cancelListening($)
