@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { HubState, MicPhase } from '../types'
 
+import { HOTKEY_ENCODED, parseHotkey } from './hotkey'
+import type { Hotkey } from './hotkey'
 import { failMessage, LISTEN_ENCODED, licenceModels, parseListen } from './listen'
 import { LOOK } from './look'
 import { encodePowerShell, POWERSHELL } from './powershell'
@@ -504,7 +506,49 @@ async function hear($: $, o: Opts, language: string, intoDraft = false): Promise
   void speak($, acknowledgement(o.title), o)
 }
 
-export type TalkKey = 'ctrl+space' | 'space' | 'both'
+let hotkeyGen = 0
+let hotkeyState = 'off'
+
+/**
+ * Holds the system-wide talk key for this session (Windows): pressing it anywhere starts
+ * listening, or cancels listening. Runs until the plugin unloads, which frees the key.
+ */
+async function armHotkey($: $, hk: Hotkey, o: Opts, language: string): Promise<void> {
+  if (!(await onWindows($))) return
+  const gen = ++hotkeyGen
+  hotkeyState = `${hk.label} starting`
+  const child = $.process.spawn({
+    argv: [...POWERSHELL, HOTKEY_ENCODED],
+    env: { JARVIS_MODS: String(hk.mods), JARVIS_VK: String(hk.vk) },
+  })
+  let err = ''
+  for await (const chunk of child) {
+    if (gen !== hotkeyGen) return
+    if (chunk.stream === 'stderr') {
+      err += chunk.text
+      continue
+    }
+    for (const line of chunk.text.split(/\r?\n/)) {
+      if (line.startsWith('ARMED')) {
+        hotkeyState = `${hk.label} ready (works in any app)`
+        hubSet($, st => ({ ...st }))
+      } else if (line.startsWith('TAKEN')) {
+        hotkeyState = `${hk.label} is held by another app or JARVIS session`
+        hubSet($, st => ({ ...st }))
+      } else if (line.startsWith('HOTKEY')) {
+        if (isListening) cancelListening($)
+        else void hear($, o, language)
+      }
+    }
+  }
+  if (gen === hotkeyGen && !hotkeyState.includes('held by')) {
+    const why = err.trim().split('\n').filter(Boolean).slice(-1)[0]
+    hotkeyState = `${hk.label} stopped${why ? `: ${why.slice(0, 160)}` : ''}`
+    hubSet($, st => ({ ...st }))
+  }
+}
+
+export type TalkKey = 'ctrl+space' | 'space' | 'both' | 'none'
 
 /**
  * Whether this edit is the talk key. Terminals send Ctrl+Space as NUL, which reaches the
@@ -520,7 +564,7 @@ export function isTalkKey(
     e.inputText === '\u0000' ||
     (k !== undefined && (k.key === '\u0000' || (k.ctrl === true && (k.key === ' ' || k.key === 'space' || k.key === '@' || k.key === ''))))
   const space = k !== undefined && (k.key === ' ' || k.key === 'space') && !k.ctrl && !k.meta && e.text === ''
-  return mode === 'space' ? space : mode === 'ctrl+space' ? ctrlSpace : ctrlSpace || space
+  return mode === 'none' ? false : mode === 'space' ? space : mode === 'ctrl+space' ? ctrlSpace : ctrlSpace || space
 }
 
 // ---------------------------------------------------------------------------
@@ -620,7 +664,9 @@ export const register: Register = (on, options) => {
   const autoSend = options.auto_send_dictation !== false
   const voiceInput = options.voice_input !== false
   const showHub = options.hub !== false
-  const talkKey: TalkKey = options.talk_key === 'space' || options.talk_key === 'both' ? options.talk_key : 'ctrl+space'
+  const talkSpec = String(options.talk_key || 'ctrl+space').trim().toLowerCase()
+  const talkKey: TalkKey = talkSpec === 'space' || talkSpec === 'both' || talkSpec === 'ctrl+space' ? talkSpec : 'none'
+  const hotkey = parseHotkey(talkSpec === 'both' ? 'ctrl+space' : talkSpec)
   const language = String(options.voice_language ?? 'en').trim()
 
   const safety = options.safety_protocol !== false
@@ -640,6 +686,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     void refreshHud($)
     if (showHub) void $.ui.open({ id: HUB, title: 'JARVIS' }).catch(() => undefined)
+    if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
     if (useLook) {
       try {
         await $.theme.set(LOOK)
@@ -839,6 +886,7 @@ export const register: Register = (on, options) => {
           {limit === undefined && cost !== undefined && cost > 0 && <Text dimColor>Session cost ~${cost.toFixed(2)} (estimate)</Text>}
           <Text dimColor>
             Voice {st.voiceError ? 'offline' : muted ? 'muted' : 'online'} · Mic {st.mic}
+            {voiceInput && hotkey ? ` · ${hotkeyState}` : ''}
             {st.lastTaskMs !== null ? ` · last task ${duration(st.lastTaskMs)}` : ''}
           </Text>
           {st.voiceError && <Text color="#f0524f" wrap="wrap">{st.voiceError}</Text>}
@@ -912,8 +960,12 @@ export const register: Register = (on, options) => {
         stopSpeech()
         return { text: 'Stopped speaking.' }
       case 'hub': {
-        const opened = await $.ui.open({ id: HUB, title: 'JARVIS', focus: true } as never)
-        return { text: opened.isPlaced ? 'JARVIS Hub open.' : 'This window does not show panels; the Claude desktop app does.' }
+        const opened = await $.ui.open({ id: HUB, title: 'JARVIS' })
+        return {
+          text: opened.isPlaced
+            ? 'JARVIS Hub open.'
+            : 'JARVIS Hub opened. In the Claude desktop app it sits in the panel on the right; some terminals do not show panels.',
+        }
       }
       case 'brief':
       case 'briefing':
@@ -943,7 +995,7 @@ export const register: Register = (on, options) => {
         return { text: `By accepting, you confirm you have the rights each licence requires for your use.\n${done.join('\n')}\nNow try /listen again.` }
       }
       case 'status':
-        return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
+        return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
         return { text: 'Usage: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences' }
     }

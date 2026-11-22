@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
@@ -40,12 +40,7 @@
     "talk_key": {
       "type": "string",
       "title": "Talk key",
-      "description": "ctrl+space: works any time; with a draft in the box, what you say is added to it. space: Space in an empty prompt. both: either.",
-      "options": [
-        "ctrl+space",
-        "space",
-        "both"
-      ],
+      "description": "Key that starts listening. A combination such as ctrl+space (default), ctrl+shift+space, alt+j or ctrl+f9 is held system-wide on Windows, so it works in the desktop app, the terminal and any other app. 'space' means Space in an empty prompt (terminal only); 'both' means Ctrl+Space plus that.",
       "default": "ctrl+space"
     },
     "voice_language": {

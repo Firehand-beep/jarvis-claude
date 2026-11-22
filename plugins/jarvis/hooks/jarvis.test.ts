@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { parseHotkey } from './hotkey'
 import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
 import { riskOf } from './protocols'
@@ -9,7 +10,7 @@ type Run = { argv: readonly string[]; env: Record<string, string> }
 const tick = (ms = 50) => new Promise<void>(r => (globalThis as any).setTimeout(r, ms))
 
 /** A Windows host whose PowerShell children are recorded and finish at once. */
-function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = [], recorderSays = '') {
+function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = [], recorderSays = '', hotkeySays = 'ARMED\n') {
   on('command.register', () => ({ value: { command: 'jarvis' } }))
   on('session.machine', () => ({
     value: { sysname: 'Windows_NT', release: '10.0.22631', machine: 'x86_64', packageManagers: [], runtimes: [] },
@@ -18,7 +19,7 @@ function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = []
   on('process.spawn', async function* (_: unknown, e: { argv: readonly string[]; env?: Record<string, string> }) {
     runs.push({ argv: e.argv, env: e.env ?? {} })
     // The voice recorder is the child given a JARVIS_MAX_MS; speech playback the others.
-    yield { stream: 'stdout' as const, text: e.env?.JARVIS_MAX_MS ? recorderSays : '.' }
+    yield { stream: 'stdout' as const, text: e.env?.JARVIS_VK ? hotkeySays : e.env?.JARVIS_MAX_MS ? recorderSays : '.' }
     return { value: { code: 0, signal: null } }
   })
   on('ui.toast', () => ({ value: undefined }))
@@ -154,7 +155,7 @@ test('session start: HUD shows context, limits and branch; briefing reports the 
 
   expect(statuses.some(t => t === '◉ JARVIS · ctx 25% · 5h 12% · ⎇ main')).toBe(true)
   const spoken = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string)
-  expect(spoken.some(t => t.includes('the main branch, with 3 uncommitted changes'))).toBe(true)
+  expect(spoken.some(t => (t ?? '').includes('the main branch, with 3 uncommitted changes'))).toBe(true)
 })
 
 const b64 = (t: string) => btoa(String.fromCharCode(...new TextEncoder().encode(t)))
@@ -245,4 +246,32 @@ test('the hub draws its status, gauges and buttons on every surface, and Listen 
   await tick(100)
   expect(runs.some(r => r.env.JARVIS_MAX_MS)).toBe(true)
   await ui.unmount()
+})
+
+test('talk key specs become Windows hotkeys', () => {
+  expect(parseHotkey('ctrl+space')).toEqual({ mods: 0x2, vk: 0x20, label: 'Ctrl+Space' })
+  expect(parseHotkey('Ctrl + Shift + Space')).toEqual({ mods: 0x6, vk: 0x20, label: 'Ctrl+Shift+Space' })
+  expect(parseHotkey('alt+j')).toEqual({ mods: 0x1, vk: 0x4a, label: 'Alt+J' })
+  expect(parseHotkey('ctrl+f9')).toEqual({ mods: 0x2, vk: 0x78, label: 'Ctrl+F9' })
+  expect(parseHotkey('space')).toBeUndefined()
+  expect(parseHotkey('hyper+space')).toBeUndefined()
+})
+
+test('on Windows the session holds Ctrl+Space system-wide; pressing it listens', async ($, on) => {
+  const runs: Run[] = []
+  windowsHost(on, runs, [], 'READY\nNOSPEECH\n', 'ARMED\nHOTKEY\n')
+  on('store.set', () => ({ value: undefined }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true } as any)
+  await tick(150)
+
+  const holder = runs.find(r => r.env.JARVIS_VK)
+  expect(holder?.env).toMatchObject({ JARVIS_MODS: '2', JARVIS_VK: '32' })
+  expect(decode(holder?.argv ?? [])).toContain('RegisterHotKey')
+  expect(runs.some(r => r.env.JARVIS_MAX_MS)).toBe(true) // the press started the recorder
 })
