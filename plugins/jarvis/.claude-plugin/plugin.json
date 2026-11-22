@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
-  "version": "0.3.3",
-  "description": "Turns Claude Code into JARVIS: a British AI butler persona that speaks its replies and alerts through local VoiceStudio (or ElevenLabs).",
+  "version": "0.4.0",
+  "description": "Turns Claude Code into JARVIS: a British AI butler persona that speaks its replies and alerts through local VoiceStudio (or ElevenLabs), with hands-free dictation.",
   "userConfig": {
     "provider": {
       "type": "string",
@@ -24,6 +24,12 @@
       "title": "VoiceStudio voice",
       "description": "Name or ID of a voice profile saved in VoiceStudio (e.g. JARVIS). 'default' designs a British male voice on the fly.",
       "default": "Jarvis"
+    },
+    "auto_send_dictation": {
+      "type": "boolean",
+      "title": "Auto-send dictation",
+      "description": "Send a dictated sentence (pasted by VoiceStudio into an empty prompt) without pressing Enter.",
+      "default": true
     },
     "elevenlabs_api_key": {
       "type": "string",

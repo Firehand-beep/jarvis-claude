@@ -6,7 +6,9 @@ Turns Claude Code into JARVIS: a calm, dry-witted British AI butler that speaks.
 - **Voice out**: that sentence is read aloud at the end of each turn.
 - **Spoken alerts**: permission prompts and idle notices are announced.
 - **Greeting**: a time-of-day greeting when a session starts.
-- **/jarvis**: `/jarvis test`, `/jarvis say <text>`, `/jarvis mute`, `/jarvis unmute`.
+- **Hands-free**: with VoiceStudio dictation (Settings → Hotkey, default Ctrl+Shift+Space), a spoken sentence pasted into an empty prompt is sent automatically and acknowledged ("Right away, sir."). Pasted code, links or multi-line text are never auto-sent. Turn off with the **Auto-send dictation** setting.
+- **Interruptible**: typing or pasting silences JARVIS at once; `/jarvis stop` does too.
+- **/jarvis**: `stop`, `test`, `status`, `say <text>`, `mute`, `unmute`.
 
 ## Voice engines
 

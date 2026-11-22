@@ -89,6 +89,7 @@ function speechRequest(text: string, o: Opts, windows: boolean) {
 // Everything arrives through environment variables, never the command line.
 const PS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $f = Join-Path $env:TEMP ('jarvis-' + [guid]::NewGuid().ToString() + '.' + $env:JARVIS_EXT)
 $h = @{}
 if ($env:JARVIS_HDR_NAME) { $h[$env:JARVIS_HDR_NAME] = $env:JARVIS_HDR_VALUE }
@@ -124,8 +125,17 @@ try {
     [IO.File]::WriteAllBytes($wav, $ms.ToArray())
     $sp = New-Object System.Media.SoundPlayer $wav
     $sp.Load()
-    $sp.PlaySync()
-    Start-Sleep -Milliseconds 300
+    $sp.Play()
+    # Heartbeat while it plays (48 bytes per ms): the plugin stops the clip by ending this process.
+    $total = [int]($len / 48) + 300
+    $t = 0
+    while ($t -lt $total) {
+      Start-Sleep -Milliseconds 100
+      $t += 100
+      [Console]::Out.WriteLine('.')
+      [Console]::Out.Flush()
+    }
+    $sp.Stop()
     Remove-Item $wav -ErrorAction SilentlyContinue
   } elseif ($env:JARVIS_EXT -eq 'wav') {
     $sp = New-Object System.Media.SoundPlayer $f
@@ -184,8 +194,15 @@ const PS_ENCODED = encodePowerShell(PS_SCRIPT)
 let queue: Promise<unknown> = Promise.resolve()
 let lastError: string | undefined
 let isWindows: boolean | undefined
+/** Bumped to cut off the line playing now and drop the ones waiting. */
+let generation = 0
+let isSpeaking = false
 
-async function synthesizeAndPlay($: $, text: string, o: Opts) {
+function stopSpeech() {
+  generation++
+}
+
+async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number) {
   if (isWindows === undefined) isWindows = (await $.session.machine()).sysname === 'Windows_NT'
   const req = speechRequest(text, o, isWindows)
   const env: Record<string, string> = {
@@ -195,12 +212,27 @@ async function synthesizeAndPlay($: $, text: string, o: Opts) {
     JARVIS_HDR_NAME: req.header?.[0] ?? '',
     JARVIS_HDR_VALUE: req.header?.[1] ?? '',
   }
-  const argv = isWindows
-    ? ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', PS_ENCODED]
-    : ['sh', '-s']
-  const r = await $.process.run(argv, isWindows ? { env, timeoutMs: 150_000 } : { stdin: SH_SCRIPT, env, timeoutMs: 150_000 })
-  if (r.exitCode !== 0) {
-    const why = r.stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `exit ${r.exitCode}`
+  let exitCode: number
+  let stderr = ''
+  if (isWindows) {
+    // Spawned, so leaving the loop ends PowerShell and the clip with it.
+    const child = $.process.spawn({
+      argv: ['powershell.exe', '-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', PS_ENCODED],
+      env,
+    })
+    for await (const chunk of child) {
+      if (gen !== generation) return // stopped: breaking out kills the child
+      if (chunk.stream === 'stderr') stderr += chunk.text
+    }
+    if (gen !== generation) return
+    exitCode = (await child.result).code ?? 1
+  } else {
+    const r = await $.process.run(['sh', '-s'], { stdin: SH_SCRIPT, env, timeoutMs: 150_000 })
+    exitCode = r.exitCode
+    stderr = r.stderr
+  }
+  if (exitCode !== 0) {
+    const why = stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `exit ${exitCode}`
     const hint = o.provider === 'voicestudio' && /connect|refused|unable|actively/i.test(why)
       ? ' (is the VoiceStudio app running?)'
       : ''
@@ -213,21 +245,45 @@ async function synthesizeAndPlay($: $, text: string, o: Opts) {
 function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
   const line = text.trim()
   if (!line) return Promise.resolve(undefined)
+  const gen = generation
   const run = queue.then(async () => {
+    if (gen !== generation) return undefined // stopped before its turn
     if ((await $.store.get(MUTE_KEY)) === true) return undefined
+    isSpeaking = true
     try {
-      await synthesizeAndPlay($, line, opts)
+      await synthesizeAndPlay($, line, opts, gen)
       lastError = undefined
       return undefined
     } catch (err) {
+      if (gen !== generation) return undefined
       lastError = err instanceof Error ? err.message : String(err)
       $.ui.toast(`JARVIS voice failed: ${lastError}`)
       $.ui.status('⚠ JARVIS voice error: /jarvis status')
       return lastError
+    } finally {
+      isSpeaking = false
     }
   })
   queue = run
   return run
+}
+
+/** One line of natural speech, as VoiceStudio dictation pastes it, not code or a URL. */
+function looksDictated(text: string): boolean {
+  return (
+    text.length >= 3 &&
+    text.length <= 600 &&
+    !/[\r\n]/.test(text) &&
+    /[A-Za-z]/.test(text) &&
+    /[.!?]["')]?$/.test(text) &&
+    !/^https?:\/\//.test(text) &&
+    !/[{};=<>]|=>|\(\)/.test(text)
+  )
+}
+
+const ACKS = ['Right away, {t}.', 'On it, {t}.', 'Very good, {t}.', 'Certainly, {t}.']
+function acknowledgement(title: string): string {
+  return ACKS[Math.floor(Math.random() * ACKS.length)]!.replace('{t}', title)
 }
 
 function greeting(title: string): string {
@@ -249,11 +305,12 @@ export const register: Register = (on, options) => {
     elVoice: String(options.elevenlabs_voice_id || 'YAf0kHlnNFUAy45cwsfF'),
     title: String(options.address_as || 'sir'),
   }
+  const autoSend = options.auto_send_dictation !== false
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS voice: /jarvis test | status | say <text> | mute | unmute',
+      description: 'JARVIS voice: /jarvis stop | test | status | say <text> | mute | unmute',
     })
     const result = await next(e)
     $.ui.status('◉ JARVIS')
@@ -268,6 +325,21 @@ export const register: Register = (on, options) => {
       ...r,
       sections: [...r.sections, { id: 'jarvis:persona', text: persona(opts.title), scope: 'session' as const }],
     }
+  })
+
+  // Typing or pasting into the prompt silences JARVIS. A dictated line (one pasted sentence into an
+  // empty box) is sent at once, with a short spoken acknowledgement.
+  on('prompt.edit', async ($, e, next) => {
+    if (e.origin.kind !== 'composer') return next(e)
+    stopSpeech()
+    const pasted = e.key === undefined ? e.inputText.trim() : ''
+    if (autoSend && pasted && e.text.trim() === '' && looksDictated(pasted)) {
+      const r = await next({ ...e, inputText: '' })
+      void $.prompt.submit({ text: pasted })
+      void speak($, acknowledgement(opts.title), opts)
+      return r
+    }
+    return next(e)
   })
 
   // Speak the opening line of each main-loop reply.
@@ -316,10 +388,15 @@ export const register: Register = (on, options) => {
         if (!err) $.ui.status('◉ JARVIS')
         return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
       }
+      case 'stop':
+      case 'quiet':
+      case 'shh':
+        stopSpeech()
+        return { text: 'Stopped speaking.' }
       case 'status':
         return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis test | status | say <text> | mute | unmute' }
+        return { text: 'Usage: /jarvis stop | test | status | say <text> | mute | unmute' }
     }
   })
 }

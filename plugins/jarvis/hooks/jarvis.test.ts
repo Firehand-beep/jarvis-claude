@@ -1,39 +1,92 @@
 import { expect, test } from 'claude-code/testing'
 
-test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($, on) => {
-  const runs: { argv: readonly string[]; env: Record<string, string> }[] = []
+type Run = { argv: readonly string[]; env: Record<string, string> }
+
+const tick = (ms = 50) => new Promise<void>(r => (globalThis as any).setTimeout(r, ms))
+
+/** A Windows host whose PowerShell children are recorded and finish at once. */
+function windowsHost(on: any, runs: Run[]) {
   on('command.register', () => ({ value: { command: 'jarvis' } }))
   on('session.machine', () => ({
     value: { sysname: 'Windows_NT', release: '10.0.22631', machine: 'x86_64', packageManagers: [], runtimes: [] },
   }))
   on('store.get', () => ({ value: undefined }))
-  on('process.run', (_, e) => {
-    runs.push({ argv: e.argv, env: e.init?.env ?? {} })
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  on('process.spawn', async function* (_: unknown, e: { argv: readonly string[]; env?: Record<string, string> }) {
+    runs.push({ argv: e.argv, env: e.env ?? {} })
+    yield { stream: 'stdout' as const, text: '.' }
+    return { value: { code: 0, signal: null } }
   })
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+}
+
+function decode(argv: readonly string[]): string {
+  const raw = atob(argv[argv.indexOf('-EncodedCommand') + 1] ?? '')
+  let script = ''
+  for (let i = 0; i < raw.length; i += 2) script += String.fromCharCode(raw.charCodeAt(i) | (raw.charCodeAt(i + 1) << 8))
+  return script
+}
+
+test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($, on) => {
+  const runs: Run[] = []
+  windowsHost(on, runs)
   on('turn.complete', (_, e) => ({ text: e.answer }))
 
   await $.turn.complete({
     answer: 'All tests pass, sir. Here is the `diff`:\n```ts\nx\n```',
     durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer',
   })
-  await new Promise(r => setTimeout(r, 50))
+  await tick()
 
   const spoken = runs.find(r => r.env.JARVIS_BODY?.includes('All tests pass'))
   expect(spoken?.argv[0]).toBe('powershell.exe')
-  // The script travels as -EncodedCommand (UTF-16LE base64), not stdin.
-  const enc = spoken?.argv[spoken.argv.indexOf('-EncodedCommand') + 1] ?? ''
-  const raw = atob(enc)
-  let script = ''
-  for (let i = 0; i < raw.length; i += 2) script += String.fromCharCode(raw.charCodeAt(i) | (raw.charCodeAt(i + 1) << 8))
+  const script = decode(spoken?.argv ?? [])
   expect(script).toContain('System.Media.SoundPlayer')
-  expect(script).toContain("Invoke-WebRequest")
+  expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
   expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/speech')
   const body = JSON.parse(spoken?.env.JARVIS_BODY ?? '{}')
   expect(body.input).toBe('All tests pass, sir.')
   expect(body.response_format).toBe('pcm')
   expect(body.voice).toBe('Jarvis')
   expect(body.instructions).toBeUndefined()
+})
+
+test('a dictated sentence pasted into an empty box is sent and acknowledged', async ($, on) => {
+  const runs: Run[] = []
+  const submitted: string[] = []
+  windowsHost(on, runs)
+  on('prompt.edit', (_, e) => ({ text: e.text + e.inputText, cursor: (e.text + e.inputText).length }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+
+  const r = await ($.prompt as any).edit({
+    origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0,
+    inputText: 'What files are in this folder?',
+  })
+  await tick()
+
+  expect(r.text).toBe('') // the paste never sits in the box
+  expect(submitted).toEqual(['What files are in this folder?'])
+  expect(runs.some(x => /sir\./.test(JSON.parse(x.env.JARVIS_BODY ?? '{}').input ?? ''))).toBe(true)
+})
+
+test('pasted code or a URL is left in the box', async ($, on) => {
+  const submitted: string[] = []
+  windowsHost(on, [])
+  on('prompt.edit', (_, e) => ({ text: e.text + e.inputText, cursor: 0 }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+
+  for (const inputText of ['const x = f();', 'https://example.com/a.', 'line one.\nline two.', 'no punctuation here']) {
+    const r = await ($.prompt as any).edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText })
+    expect(r.text).toBe(inputText)
+  }
+  await tick()
+  expect(submitted).toEqual([])
 })
 
 test('the persona is added to the system prompt', async ($, on) => {

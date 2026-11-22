@@ -4,7 +4,7 @@ A series of mods that turn Claude Code into JARVIS.
 
 | Mod | Status | What it does |
 |---|---|---|
-| `jarvis` | v0.3.3 | Butler persona, spoken reply summaries and alerts, greeting, `/jarvis` command |
+| `jarvis` | v0.4.0 | Butler persona, spoken reply summaries and alerts, hands-free dictation (auto-send), interruptible speech, `/jarvis` command |
 
 ## Install
 
