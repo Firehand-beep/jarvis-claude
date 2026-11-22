@@ -4,6 +4,10 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { HubState, MicPhase } from '../types'
 
 import { HOTKEY_ENCODED, parseHotkey } from './hotkey'
+import { describeReminder, firstDue, nextDue, whenText } from './reminders'
+import type { Reminder, Repeat } from './reminders'
+import { describeWindows, parseWindows, WINDOWS_ENCODED } from './windows'
+import type { WinAction } from './windows'
 import { forecastUrl, geocodeUrl, knowledgeSection, placeFrom, weatherReport } from './knowledge'
 import {
   dayStamp,
@@ -680,6 +684,64 @@ async function forgetMemory($: $, what: 'notes' | 'conversations' | 'everything'
   return r.exitCode === 0 ? `Forgotten: ${what}.` : `Could not forget ${what}: ${r.stderr.trim().slice(0, 200)}`
 }
 
+
+// ---------------------------------------------------------------------------
+// Windows control and reminders
+// ---------------------------------------------------------------------------
+
+/** Runs one Windows action and answers in a sentence for the model. */
+async function windowsDo($: $, action: WinAction, mode = '', value = ''): Promise<string> {
+  if (!(await onWindows($))) return 'This only works on Windows.'
+  const r = await $.process.run([...POWERSHELL, WINDOWS_ENCODED], {
+    env: { ALFRED_ACTION: action, ALFRED_MODE: mode, ALFRED_VALUE: value },
+    timeoutMs: 30_000,
+  })
+  return describeWindows(action, parseWindows(r.stdout, r.stderr))
+}
+
+const REMINDERS_KEY = 'reminders'
+
+const SAFE_TOOLS = new Set(
+  ['remember', 'recall', 'weather', 'volume', 'media', 'screenshot', 'lock_screen', 'battery', 'remind', 'list_reminders', 'cancel_reminder'].map(
+    n => `mcp__jarvis__${n}`,
+  ),
+)
+let reminderTimer: { cancel: () => void } | undefined
+
+async function getReminders($: $): Promise<Reminder[]> {
+  const v = await $.store.get(REMINDERS_KEY)
+  return Array.isArray(v) ? (v as Reminder[]) : []
+}
+
+async function setReminders($: $, list: Reminder[]): Promise<void> {
+  await $.store.set(REMINDERS_KEY, list)
+}
+
+/** Says, notifies or asks each reminder that is due; reschedules repeating ones. */
+async function fireDue($: $, o: Opts, missedAtStart: boolean): Promise<void> {
+  const now = Date.now()
+  const list = await getReminders($)
+  const due = list.filter(r => r.due <= now + 1000)
+  if (!due.length) return
+  const keep = list.filter(r => r.due > now + 1000)
+  for (const r of due) {
+    const late = now - r.due > 120_000
+    if (r.ask) {
+      if (!late) submitSpoken($, `(A request you scheduled earlier.) ${r.text}`)
+    } else {
+      const line = late && missedAtStart
+        ? `While you were away, ${o.title}, I was to remind you: ${r.text}.`
+        : `Pardon the interruption, ${o.title}. You asked me to remind you: ${r.text}.`
+      void speak($, line, o)
+      $.ui.toast(`${NAME}: ${r.text}`)
+      void $.ui.notify(r.text, { title: `${NAME} · reminder` }).catch(() => undefined)
+    }
+    const next = nextDue(r, now)
+    if (next !== undefined) keep.push({ ...r, due: next })
+  }
+  await setReminders($, keep.sort((a, b) => a.due - b.due))
+}
+
 // ---------------------------------------------------------------------------
 // HUD (status line) and briefings
 // ---------------------------------------------------------------------------
@@ -802,6 +864,64 @@ export const register: Register = (on, options) => {
       name: 'alfred',
       description: `${NAME}: /alfred hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
     })
+    const winTools: { name: string; description: string; inputSchema?: Record<string, unknown> }[] = [
+      {
+        name: 'volume',
+        description: "Windows system volume: set an exact level, turn it up or down, mute or unmute, or just report it. Always say the resulting level.",
+        inputSchema: {
+          type: 'object',
+          properties: {
+            set: { type: 'number', description: 'Exact level, 0 to 100.' },
+            change: { type: 'number', description: 'Relative change in points, e.g. 10 or -20.' },
+            mute: { type: 'boolean', description: 'true mutes, false unmutes.' },
+          },
+        },
+      },
+      {
+        name: 'media',
+        description: 'Media keys for whatever is playing on the PC (Spotify, YouTube, any player).',
+        inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['playpause', 'next', 'previous', 'stop'] } }, required: ['action'] },
+      },
+      {
+        name: 'open',
+        description: 'Open an app, website or file on the PC: an app name (chrome, notepad, spotify, explorer, calc), a URL (https://…), a URI (spotify:, ms-settings:) or a full file path.',
+        inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
+      },
+      {
+        name: 'screenshot',
+        description: "Take a screenshot of the whole screen and save it to Pictures\\Alfred Screenshots. Returns the file's path; read that file to see what is on the screen.",
+      },
+      { name: 'lock_screen', description: 'Lock the PC (the Windows lock screen).' },
+      { name: 'battery', description: "The laptop's battery level and whether it is plugged in." },
+      {
+        name: 'remind',
+        description:
+          'Set a reminder or timer. Give in_minutes (a timer) or at ("HH:MM", or "YYYY-MM-DD HH:MM", local time). repeat: none, daily, weekdays or weekly. ask=true makes it a scheduled request: when due, the text is put to you as if the person asked it (e.g. "Give me my morning briefing"). Confirm back when it is due, in words.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'What to remind them of, or the request to carry out.' },
+            in_minutes: { type: 'number' },
+            at: { type: 'string' },
+            repeat: { type: 'string', enum: ['none', 'daily', 'weekdays', 'weekly'] },
+            ask: { type: 'boolean' },
+          },
+          required: ['text'],
+        },
+      },
+      { name: 'list_reminders', description: 'List the reminders and scheduled requests that are set, soonest first, with their ids.' },
+      {
+        name: 'cancel_reminder',
+        description: 'Cancel a reminder by its id (from list_reminders).',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      },
+    ]
+    for (const t of winTools) await $.tool.register({ ...t, isDeferred: false })
+    reminderTimer?.cancel()
+    reminderTimer = $.clock.every(15_000, () => {
+      void fireDue($, opts, false).catch(err => $.ui.log(`reminders: ${String(err)}`, { to: 'debug' }))
+    })
+    void fireDue($, opts, true).catch(() => undefined)
     await $.tool.register({
       name: 'weather',
       description: `Current weather and a 3-day forecast for a place (Open-Meteo). Use it for any weather question instead of a web search.${homeCity ? ` No place given means ${homeCity}.` : ''}`,
@@ -901,7 +1021,8 @@ export const register: Register = (on, options) => {
 
   // Safety protocol: a destructive shell command is put to the person, out loud, whatever the mode.
   on('tool.check', async ($, e, next) => {
-    if (e.tool === 'mcp__jarvis__remember' || e.tool === 'mcp__jarvis__recall' || e.tool === 'mcp__jarvis__weather') return { decision: 'allow' as const }
+    // Alfred's own harmless tools run without asking; `open` goes through the normal permission check.
+    if (SAFE_TOOLS.has(e.tool)) return { decision: 'allow' as const }
     const verdict = await next(e)
     if (verdict.decision === 'deny') return verdict
     if (useMemory && memFolder) {
@@ -925,6 +1046,55 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) =>
     next.called ? next(e) : { decision: 'ask' as const, reason: `${NAME}'s safety protocol could not check this command.` },
   )
+
+  on('tool.run', { tool: 'mcp__jarvis__volume' }, async ($, e) => {
+    const a = e as unknown as { set?: number; change?: number; mute?: boolean }
+    if (typeof a.set === 'number') return { result: await windowsDo($, 'volume', 'set', String(a.set)) }
+    if (typeof a.change === 'number') return { result: await windowsDo($, 'volume', 'change', String(a.change)) }
+    if (a.mute === true) return { result: await windowsDo($, 'volume', 'mute') }
+    if (a.mute === false) return { result: await windowsDo($, 'volume', 'unmute') }
+    return { result: await windowsDo($, 'volume', 'get') }
+  })
+  on('tool.run', { tool: 'mcp__jarvis__media' }, async ($, e) => {
+    const action = String((e as unknown as { action?: unknown }).action ?? '')
+    if (!['playpause', 'next', 'previous', 'stop'].includes(action)) return { result: 'action must be playpause, next, previous or stop.' }
+    return { result: await windowsDo($, 'media', action) }
+  })
+  on('tool.run', { tool: 'mcp__jarvis__open' }, async ($, e) => {
+    const target = String((e as unknown as { target?: unknown }).target ?? '').trim()
+    if (!target) return { result: 'Nothing to open: give an app, URL or file.' }
+    return { result: await windowsDo($, 'open', '', target) }
+  })
+  on('tool.run', { tool: 'mcp__jarvis__screenshot' }, async $ => ({ result: await windowsDo($, 'screenshot') }))
+  on('tool.run', { tool: 'mcp__jarvis__lock_screen' }, async $ => ({ result: await windowsDo($, 'lock') }))
+  on('tool.run', { tool: 'mcp__jarvis__battery' }, async $ => ({ result: await windowsDo($, 'battery') }))
+
+  on('tool.run', { tool: 'mcp__jarvis__remind' }, async ($, e) => {
+    const a = e as unknown as { text?: unknown; in_minutes?: unknown; at?: unknown; repeat?: unknown; ask?: unknown }
+    const text = String(a.text ?? '').trim()
+    if (!text) return { result: 'Nothing to remind: text is empty.' }
+    const repeat: Repeat = a.repeat === 'daily' || a.repeat === 'weekdays' || a.repeat === 'weekly' ? a.repeat : 'none'
+    const now = new Date()
+    const due = firstDue(now, typeof a.in_minutes === 'number' ? a.in_minutes : undefined, typeof a.at === 'string' ? a.at : undefined, repeat)
+    if (typeof due === 'string') return { result: due }
+    const r: Reminder = { id: Math.random().toString(36).slice(2, 7), text, due, repeat, ask: a.ask === true, created: now.getTime() }
+    const list = [...(await getReminders($)), r].sort((x, y) => x.due - y.due)
+    await setReminders($, list)
+    return { result: `Set: ${describeReminder(r, now.getTime())}. It fires while a ${NAME} session is open.` }
+  })
+  on('tool.run', { tool: 'mcp__jarvis__list_reminders' }, async $ => {
+    const list = await getReminders($)
+    const now = Date.now()
+    return { result: list.length ? list.map(r => describeReminder(r, now)).join('\n') : 'No reminders are set.' }
+  })
+  on('tool.run', { tool: 'mcp__jarvis__cancel_reminder' }, async ($, e) => {
+    const id = String((e as unknown as { id?: unknown }).id ?? '').trim()
+    const list = await getReminders($)
+    const gone = list.find(r => r.id === id)
+    if (!gone) return { result: `No reminder has the id "${id}". list_reminders shows them.` }
+    await setReminders($, list.filter(r => r.id !== id))
+    return { result: `Cancelled: "${gone.text}" (was due ${whenText(gone.due, Date.now())}).` }
+  })
 
   on('tool.run', { tool: 'mcp__jarvis__weather' }, async ($, e) => {
     const place = String((e as unknown as { place?: unknown }).place ?? '') || homeCity

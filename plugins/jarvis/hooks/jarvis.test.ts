@@ -4,6 +4,8 @@ import { parseHotkey } from './hotkey'
 import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
 import { riskOf } from './protocols'
+import { firstDue, nextDue } from './reminders'
+import { describeWindows, parseWindows } from './windows'
 
 type Run = { argv: readonly string[]; env: Record<string, string> }
 
@@ -441,4 +443,78 @@ test('a restart of the plugin mid-session does not greet again, and finishes the
   const said = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string).filter(Boolean)
   expect(said.some(t => /Good (morning|afternoon|evening)|Up rather late/.test(t))).toBe(false)
   expect(said).toContain('Tomorrow in Singapore will be warm and humid, sir.')
+})
+
+
+test('reminder times: timers, clock times, weekdays and repeats', () => {
+  const now = new Date(2026, 10, 20, 18, 0) // Friday 20 Nov 2026, 18:00
+  expect(firstDue(now, 20, undefined, 'none')).toBe(now.getTime() + 20 * 60_000)
+  expect(new Date(firstDue(now, undefined, '19:30', 'none') as number).getHours()).toBe(19)
+  const tomorrow9 = new Date(firstDue(now, undefined, '9:00', 'none') as number)
+  expect([tomorrow9.getDate(), tomorrow9.getHours()]).toEqual([21, 9])
+  const weekday9 = new Date(firstDue(now, undefined, '9:00 am', 'weekdays') as number)
+  expect([weekday9.getDay(), weekday9.getDate()]).toEqual([1, 23]) // Monday 23rd, not the weekend
+  expect(typeof firstDue(now, undefined, 'teatime', 'none')).toBe('string')
+  const friday = { id: 'a', text: 'x', due: new Date(2026, 10, 20, 9, 0).getTime(), repeat: 'weekdays' as const, ask: false, created: 0 }
+  expect(new Date(nextDue(friday, now.getTime()) as number).getDay()).toBe(1)
+  expect(nextDue({ ...friday, repeat: 'none' }, now.getTime())).toBeUndefined()
+})
+
+test('windows: the script\'s answer becomes one sentence', () => {
+  expect(describeWindows('volume', parseWindows('{"ok":true,"level":30,"muted":false}\n', ''))).toBe('Volume is now 30%.')
+  expect(describeWindows('battery', parseWindows('{"ok":true,"hasBattery":true,"percent":82,"pluggedIn":true}', ''))).toBe('Battery at 82%, plugged in.')
+  expect(describeWindows('media', parseWindows('', 'Exception: boom'))).toBe('That did not work: Exception: boom')
+})
+
+test('windows and reminder tools: volume runs the script; harmless tools run without asking, open does not', async ($: any, on: any) => {
+  const store = new Map<string, unknown>()
+  const ran: { env?: Record<string, string> }[] = []
+  windowsHost(on, [], [], '', 'ARMED\n', store)
+  on('process.run', (_: unknown, e: any) => {
+    ran.push({ env: e.init?.env })
+    return { value: { exitCode: 0, stdout: '{"ok":true,"level":30,"muted":false}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('tool.run', () => ({ result: 'engine' }))
+  on('tool.check', () => ({ decision: 'ask' as const }))
+
+  const r = await $.tool.run({ tool: 'mcp__jarvis__volume', set: 30, tool_use_id: 'v1' })
+  expect(r.result).toBe('Volume is now 30%.')
+  expect(ran[0]?.env).toMatchObject({ ALFRED_ACTION: 'volume', ALFRED_MODE: 'set', ALFRED_VALUE: '30' })
+
+  expect((await $.tool.check({ tool: 'mcp__jarvis__volume', input: { set: 30 } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'mcp__jarvis__remind', input: { text: 'x' } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'mcp__jarvis__open', input: { target: 'chrome' } })).decision).toBe('ask')
+
+  const set = await $.tool.run({ tool: 'mcp__jarvis__remind', text: 'stretch', in_minutes: 20, tool_use_id: 'r1' })
+  expect(String(set.result)).toContain('"stretch"')
+  const saved = store.get('reminders') as { id: string; text: string }[]
+  expect(saved.map(x => x.text)).toEqual(['stretch'])
+  const listed = await $.tool.run({ tool: 'mcp__jarvis__list_reminders', tool_use_id: 'r2' })
+  expect(String(listed.result)).toContain('stretch')
+  const gone = await $.tool.run({ tool: 'mcp__jarvis__cancel_reminder', id: saved[0]!.id, tool_use_id: 'r3' })
+  expect(String(gone.result)).toContain('Cancelled')
+  expect(store.get('reminders')).toEqual([])
+})
+
+test('a reminder that is due is said aloud when the session starts', async ($: any, on: any) => {
+  const runs: Run[] = []
+  const store = new Map<string, unknown>([
+    ['greeted_session', 's-2'],
+    ['reminders', [{ id: 'z', text: 'call the bank', due: Date.now() - 1000, repeat: 'none', ask: false, created: 0 }]],
+  ])
+  windowsHost(on, runs, [], '', 'ARMED\n', store)
+  on('session.id', () => ({ value: 's-2' }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('env.get', () => ({ value: undefined }))
+  on('ui.notify', () => ({ value: { isSent: true, channel: 'client' } }))
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
+  await tick(200)
+  const said = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string).filter(Boolean)
+  expect(said.some(t => t.includes('You asked me to remind you: call the bank.'))).toBe(true)
+  expect(store.get('reminders')).toEqual([])
 })
