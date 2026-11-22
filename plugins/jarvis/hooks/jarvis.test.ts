@@ -31,7 +31,7 @@ test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($
   expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/speech')
   const body = JSON.parse(spoken?.env.JARVIS_BODY ?? '{}')
   expect(body.input).toBe('All tests pass, sir.')
-  expect(body.response_format).toBe('wav')
+  expect(body.response_format).toBe('pcm')
   expect(body.voice).toBe('Jarvis')
   expect(body.instructions).toBeUndefined()
 })

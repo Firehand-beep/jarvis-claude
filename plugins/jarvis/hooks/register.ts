@@ -58,7 +58,7 @@ type Opts = {
 const DESIGN = 'male, middle-aged, low pitch, british accent'
 
 /** The HTTP request that turns `text` into audio, per provider. */
-function speechRequest(text: string, o: Opts) {
+function speechRequest(text: string, o: Opts, windows: boolean) {
   if (o.provider === 'elevenlabs') {
     if (!o.elKey) throw new Error('no ElevenLabs API key set (/config > jarvis)')
     return {
@@ -76,10 +76,12 @@ function speechRequest(text: string, o: Opts) {
       input: text,
       voice: isDefault ? 'default' : o.vsVoice,
       ...(isDefault ? { instructions: DESIGN, language: 'en' } : {}),
-      response_format: 'wav',
+      // Windows gets raw 24 kHz 16-bit PCM and wraps it in a WAV of its own (padded with silence),
+      // which SoundPlayer plays reliably; elsewhere a ready WAV.
+      response_format: windows ? 'pcm' : 'wav',
     }),
     header: undefined,
-    ext: 'wav',
+    ext: windows ? 'pcm' : 'wav',
   }
 }
 
@@ -93,7 +95,39 @@ if ($env:JARVIS_HDR_NAME) { $h[$env:JARVIS_HDR_NAME] = $env:JARVIS_HDR_VALUE }
 $body = [Text.Encoding]::UTF8.GetBytes($env:JARVIS_BODY)
 Invoke-WebRequest -UseBasicParsing -Method Post -Uri $env:JARVIS_URL -Headers $h -ContentType 'application/json' -Body $body -OutFile $f -TimeoutSec 90
 try {
-  if ($env:JARVIS_EXT -eq 'wav') {
+  if ($env:JARVIS_EXT -eq 'pcm') {
+    # Raw 24 kHz 16-bit mono -> standard WAV, with silence before (device wake-up) and after (buffer drain).
+    $pcm = [IO.File]::ReadAllBytes($f)
+    $rate = 24000
+    $pre = New-Object byte[] 16800
+    $post = New-Object byte[] 28800
+    $len = $pre.Length + $pcm.Length + $post.Length
+    $ms = New-Object IO.MemoryStream
+    $w = New-Object IO.BinaryWriter($ms)
+    $w.Write([Text.Encoding]::ASCII.GetBytes('RIFF'))
+    $w.Write([int](36 + $len))
+    $w.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt '))
+    $w.Write([int]16)
+    $w.Write([int16]1)
+    $w.Write([int16]1)
+    $w.Write([int]$rate)
+    $w.Write([int]($rate * 2))
+    $w.Write([int16]2)
+    $w.Write([int16]16)
+    $w.Write([Text.Encoding]::ASCII.GetBytes('data'))
+    $w.Write([int]$len)
+    $w.Write($pre)
+    $w.Write($pcm)
+    $w.Write($post)
+    $w.Flush()
+    $wav = $f + '.wav'
+    [IO.File]::WriteAllBytes($wav, $ms.ToArray())
+    $sp = New-Object System.Media.SoundPlayer $wav
+    $sp.Load()
+    $sp.PlaySync()
+    Start-Sleep -Milliseconds 300
+    Remove-Item $wav -ErrorAction SilentlyContinue
+  } elseif ($env:JARVIS_EXT -eq 'wav') {
     $sp = New-Object System.Media.SoundPlayer $f
     $sp.Load()
     $sp.PlaySync()
@@ -153,7 +187,7 @@ let isWindows: boolean | undefined
 
 async function synthesizeAndPlay($: $, text: string, o: Opts) {
   if (isWindows === undefined) isWindows = (await $.session.machine()).sysname === 'Windows_NT'
-  const req = speechRequest(text, o)
+  const req = speechRequest(text, o, isWindows)
   const env: Record<string, string> = {
     JARVIS_URL: req.url,
     JARVIS_BODY: req.body,
