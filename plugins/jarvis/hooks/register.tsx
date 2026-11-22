@@ -20,9 +20,14 @@ type $ = EngineInterface
 // Persona
 // ---------------------------------------------------------------------------
 
-const persona = (title: string) => `# Persona: JARVIS, the family butler
+/** The assistant's name as people see and hear it (setting: assistant_name). */
+let NAME = 'Alfred'
+/** "A.L.F.R.E.D." */
+const dotted = (n: string) => `${n.toUpperCase().split('').join('.')}.`
 
-You are JARVIS: an old-school English butler who has served this household for
+const persona = (title: string, name: string) => `# Persona: ${name}, the family butler
+
+You are ${name}: an old-school English butler who has served this household for
 decades and now runs its machines as well as its affairs. You have known the
 person you serve since they were young; you are devoted to them, proud of them,
 and entirely unimpressed by drama. Address them as "${title}".
@@ -313,8 +318,8 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
     } catch (err) {
       if (gen !== generation) return undefined
       lastError = err instanceof Error ? err.message : String(err)
-      $.ui.toast(`JARVIS voice failed: ${lastError}`)
-      $.ui.status('⚠ JARVIS voice error · /jarvis status')
+      $.ui.toast(`${NAME}'s voice failed: ${lastError}`)
+      $.ui.status(`⚠ ${NAME} voice error · /alfred status`)
       return lastError
     } finally {
       isSpeaking = false
@@ -350,13 +355,13 @@ function cancelListening($: $) {
 /** Records one utterance and hands back what was said (or undefined), reporting progress in the status line. */
 async function listenOnce($: $, o: Opts, language: string): Promise<string | undefined> {
   if (!(await onWindows($))) {
-    $.ui.toast('JARVIS voice input works on Windows for now.')
+    $.ui.toast(`${NAME}'s voice input works on Windows for now.`)
     return undefined
   }
   stopSpeech()
   const gen = ++listenGen
   isListening = true
-  $.ui.status('🎙 JARVIS · warming up the microphone…')
+  $.ui.status(`🎙 ${NAME} · warming up the microphone…`)
   hubMic($, 'warming')
   const child = $.process.spawn({
     argv: [...POWERSHELL, LISTEN_ENCODED],
@@ -381,9 +386,9 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     const now = /HEARD/.test(out) ? 'heard' : /S\s*$/.test(out) || /\nS/.test(out) ? 'speech' : /READY/.test(out) ? 'ready' : ''
     if (now !== phase) {
       phase = now
-      if (now === 'ready') $.ui.status('🎙 JARVIS · listening… (Ctrl+Space or any key to cancel)')
-      if (now === 'speech') $.ui.status('🎙 JARVIS · hearing you…')
-      if (now === 'heard') $.ui.status('⏳ JARVIS · transcribing…')
+      if (now === 'ready') $.ui.status(`🎙 ${NAME} · listening… (Ctrl+Space or any key to cancel)`)
+      if (now === 'speech') $.ui.status(`🎙 ${NAME} · hearing you…`)
+      if (now === 'heard') $.ui.status(`⏳ ${NAME} · transcribing…`)
       if (now) hubMic($, now === 'ready' ? 'listening' : now === 'speech' ? 'hearing' : 'transcribing')
     }
   }
@@ -408,15 +413,15 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
       } else {
         const why = failMessage(result.body)
         lastError = `voice input: ${why}`
-        $.ui.toast(`JARVIS voice input failed: ${why}`)
+        $.ui.toast(`${NAME}'s voice input failed: ${why}`)
       }
       return undefined
     }
     case 'broken': {
       const hint = /connect|refused|unable/i.test(result.why) ? ' (is the VoiceStudio app running?)' : ''
       lastError = `voice input: ${result.why}${hint}`
-      $.ui.toast(`JARVIS voice input failed: ${result.why}${hint}`)
-      $.ui.status('⚠ JARVIS voice input error · /jarvis status')
+      $.ui.toast(`${NAME}'s voice input failed: ${result.why}${hint}`)
+      $.ui.status(`⚠ ${NAME} voice input error · /alfred status`)
       return undefined
     }
   }
@@ -465,7 +470,7 @@ async function armHotkey($: $, hk: Hotkey, o: Opts, language: string): Promise<v
         hotkeyState = `${hk.label} ready (works in any app)`
         hubSet($, st => ({ ...st }))
       } else if (line.startsWith('TAKEN')) {
-        hotkeyState = `${hk.label} is held by another app or JARVIS session`
+        hotkeyState = `${hk.label} is held by another app or ${NAME} session`
         hubSet($, st => ({ ...st }))
       } else if (line.startsWith('HOTKEY')) {
         if (isListening) cancelListening($)
@@ -503,10 +508,10 @@ export function isTalkKey(
 // HUD (status line) and briefings
 // ---------------------------------------------------------------------------
 
-/** "◉ JARVIS · ctx 34% · 5h 12% · ⎇ main", refreshed at start, after each turn and on mute. */
+/** "◉ Alfred · ctx 34% · 5h 12% · ⎇ main", refreshed at start, after each turn and on mute. */
 async function refreshHud($: $): Promise<void> {
   if (lastError) return // the error stays up until a line plays again
-  const parts = [`${(await $.store.get(MUTE_KEY)) === true ? '◌' : '◉'} JARVIS`]
+  const parts = [`${(await $.store.get(MUTE_KEY)) === true ? '◌' : '◉'} ${NAME}`]
   try {
     const u = await $.session.usage()
     if (u.context.percent !== undefined) parts.push(`ctx ${Math.round(u.context.percent)}%`)
@@ -595,6 +600,7 @@ export const register: Register = (on, options) => {
     elVoice: String(options.elevenlabs_voice_id || '0lp4RIz96WD1RUtvEu3Q'),
     title: String(options.address_as || 'sir'),
   }
+  NAME = String(options.assistant_name || 'Alfred').trim() || 'Alfred'
   const autoSend = options.auto_send_dictation !== false
   const voiceInput = options.voice_input !== false
   const showHub = options.hub !== false
@@ -612,14 +618,18 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences',
+      description: `${NAME}: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences (also /alfred)`,
+    })
+    await $.command.register({
+      name: 'alfred',
+      description: `${NAME}: /alfred hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
     })
     if (voiceInput) {
-      await $.command.register({ name: 'listen', description: 'JARVIS: speak your next prompt (or press Ctrl+Space)' })
+      await $.command.register({ name: 'listen', description: `${NAME}: speak your next prompt (or press Ctrl+Space)` })
     }
     const result = await next(e)
     void refreshHud($)
-    if (showHub) void $.ui.open({ id: HUB, title: 'JARVIS' }).catch(() => undefined)
+    if (showHub) void $.ui.open({ id: HUB, title: NAME }).catch(() => undefined)
     if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
     if (useLook) {
       try {
@@ -637,7 +647,7 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     return {
       ...r,
-      sections: [...r.sections, { id: 'jarvis:persona', text: persona(opts.title), scope: 'session' as const }],
+      sections: [...r.sections, { id: 'jarvis:persona', text: persona(opts.title, NAME), scope: 'session' as const }],
     }
   })
 
@@ -674,9 +684,9 @@ export const register: Register = (on, options) => {
     safetySpokeAt = Date.now()
     hubSet($, st => ({ ...st, blocked: { what, command: String(command).slice(0, 160), at: Date.now() } }))
     void speak($, `If I may, ${opts.title}: this would ${what}. I'll wait for your word before I proceed.`, opts)
-    return { decision: 'ask' as const, reason: `JARVIS safety protocol: this command would ${what}.` }
+    return { decision: 'ask' as const, reason: `${NAME}'s safety protocol: this command would ${what}.` }
   }).catch(($, e, next) =>
-    next.called ? next(e) : { decision: 'ask' as const, reason: 'JARVIS safety protocol could not check this command.' },
+    next.called ? next(e) : { decision: 'ask' as const, reason: `${NAME}'s safety protocol could not check this command.` },
   )
 
   on('turn.start', async ($, e, next) => {
@@ -694,7 +704,7 @@ export const register: Register = (on, options) => {
       const first = firstSentence(e.answer)
       if (e.durationMs >= longTaskMs) {
         void speak($, `Task complete, ${opts.title}, after ${minutes(e.durationMs)}. ${first}`, opts)
-        void $.ui.notify(first || 'Task complete.', { title: 'JARVIS · task complete' }).catch(() => undefined)
+        void $.ui.notify(first || 'Task complete.', { title: `${NAME} · task complete` }).catch(() => undefined)
       } else {
         void speak($, first, opts)
       }
@@ -820,7 +830,7 @@ export const register: Register = (on, options) => {
       }
       return (
         <Box flexDirection="column" gap="xs">
-          <Svg source={panelSvg(view)} alt={`JARVIS Hub: ${state}`} />
+          <Svg source={panelSvg(view)} alt={`${NAME} Hub: ${state}`} />
           {buttons}
         </Box>
       )
@@ -831,7 +841,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" gap="md" alignItems="center">
           <Text color={color}>◉</Text>
           <Box flexDirection="column">
-            <Text size="heading" weight="bold" color={color}>J.A.R.V.I.S.</Text>
+            <Text size="heading" weight="bold" color={color}>{dotted(NAME)}</Text>
             <Text dimColor>{state}</Text>
           </Box>
         </Box>
@@ -871,7 +881,7 @@ export const register: Register = (on, options) => {
           {st.log.slice(-8).map(l => (
             <Text wrap="wrap" color={l.who === 'you' ? '#5eead4' : '#cfe3f3'}>
               <Text dimColor>{clockTime(l.at)} </Text>
-              {l.who === 'you' ? 'You: ' : 'JARVIS: '}
+              {l.who === 'you' ? 'You: ' : `${NAME}: `}
               {l.text}
             </Text>
           ))}
@@ -889,7 +899,8 @@ export const register: Register = (on, options) => {
     return { text: 'Listening… speak after the beep; I send it when you stop talking.' }
   })
 
-  on('command.run', { command: 'jarvis' }, async ($, e) => {
+  on('command.run', async ($, e, next) => {
+    if (e.command !== 'jarvis' && e.command !== 'alfred') return next(e)
     const [verb, ...rest] = e.args.trim().split(/\s+/)
     switch ((verb || '').toLowerCase()) {
       case 'mute':
@@ -919,11 +930,11 @@ export const register: Register = (on, options) => {
         stopSpeech()
         return { text: 'Stopped speaking.' }
       case 'hub': {
-        const opened = await $.ui.open({ id: HUB, title: 'JARVIS' })
+        const opened = await $.ui.open({ id: HUB, title: NAME })
         return {
           text: opened.isPlaced
-            ? 'JARVIS Hub open.'
-            : 'JARVIS Hub opened. In the Claude desktop app it sits in the panel on the right; some terminals do not show panels.',
+            ? `${NAME} Hub open.`
+            : `${NAME} Hub opened. In the Claude desktop app it sits in the panel on the right; some terminals do not show panels.`,
         }
       }
       case 'brief':
@@ -956,7 +967,7 @@ export const register: Register = (on, options) => {
       case 'status':
         return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences' }
+        return { text: `Usage: /${e.command} hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences` }
     }
   })
 }

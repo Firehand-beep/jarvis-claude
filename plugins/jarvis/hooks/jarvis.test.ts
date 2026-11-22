@@ -153,7 +153,7 @@ test('session start: HUD shows context, limits and branch; briefing reports the 
   await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true } as any)
   await tick(100)
 
-  expect(statuses.some(t => t === '◉ JARVIS · ctx 25% · 5h 12% · ⎇ main')).toBe(true)
+  expect(statuses.some(t => t === '◉ Alfred · ctx 25% · 5h 12% · ⎇ main')).toBe(true)
   const spoken = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string)
   expect(spoken.some(t => (t ?? '').includes('the main branch, with 3 uncommitted changes'))).toBe(true)
 })
@@ -234,7 +234,7 @@ test('the hub draws its status, gauges and buttons on every surface, and Listen 
 
   // The terminal draws text cards.
   const term = await ($.ui as any).mount({ ...HUB_PANE, surface: 'terminal' })
-  expect((await term.find({ type: 'Text', text: /J\.A\.R\.V\.I\.S\./ }))?.text).toBeDefined()
+  expect((await term.find({ type: 'Text', text: /A\.L\.F\.R\.E\.D\./ }))?.text).toBeDefined()
   expect((await term.find({ type: 'Text', text: /Standing by/ }))?.text).toBeDefined()
   expect((await term.find({ type: 'Text', text: /⎇ main/ }))?.text).toBeDefined()
   expect((await term.find({ type: 'Text', text: /1 uncommitted change$/ }))?.text).toBeDefined()

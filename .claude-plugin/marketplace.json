@@ -1,11 +1,13 @@
 {
   "name": "jarvis-claude",
-  "owner": { "name": "Firehand-beep" },
+  "owner": {
+    "name": "Firehand-beep"
+  },
   "plugins": [
     {
       "name": "jarvis",
       "source": "./plugins/jarvis",
-      "description": "JARVIS for Claude Code: British AI butler persona with spoken replies and alerts via local VoiceStudio or ElevenLabs."
+      "description": "Alfred for Claude Code: an old-school English family butler who speaks and listens (local VoiceStudio or ElevenLabs), guards destructive commands, and shows a holographic Hub."
     }
   ]
 }

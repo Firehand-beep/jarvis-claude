@@ -1,10 +1,10 @@
-# JARVIS for Claude Code
+# Alfred for Claude Code (plugin: jarvis)
 
-A series of mods that turn Claude Code into JARVIS.
+A series of mods that turn Claude Code into Alfred, an old-school English family butler.
 
 | Mod | Status | What it does |
 |---|---|---|
-| `jarvis` | v0.11.1 | JARVIS Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
+| `jarvis` | v0.12.0 | Alfred Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
 
 ## Install
 

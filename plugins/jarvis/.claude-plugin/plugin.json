@@ -1,8 +1,14 @@
 {
   "name": "jarvis",
-  "version": "0.11.1",
-  "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
+  "version": "0.12.0",
+  "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
+    "assistant_name": {
+      "type": "string",
+      "title": "Assistant name",
+      "description": "What the assistant is called, in what he says, the status line and the Hub.",
+      "default": "Alfred"
+    },
     "provider": {
       "type": "string",
       "title": "Voice engine",
