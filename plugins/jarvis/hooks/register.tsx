@@ -1,4 +1,7 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
+
+import type { HubState, MicPhase } from '../types'
 
 import { failMessage, LISTEN_ENCODED, licenceModels, parseListen } from './listen'
 import { LOOK } from './look'
@@ -29,6 +32,52 @@ if speaking it. Then give the details as usual.`
 
 const MUTE_KEY = 'muted'
 const MAX_SPOKEN = 400
+
+// ---------------------------------------------------------------------------
+// Hub state: what the JARVIS Hub panel draws. Change the shape tag when HubState changes.
+// ---------------------------------------------------------------------------
+
+const HUB = 'jarvis-hub'
+const HUB_INITIAL: HubState = {
+  mic: 'idle',
+  speaking: false,
+  working: false,
+  turnStartedAt: null,
+  lastTaskMs: null,
+  blocked: null,
+  voiceError: null,
+  log: [],
+}
+const hub = atom({ plugin: 'jarvis', key: 'hub' } as const, HUB_INITIAL, { shape: 'hub-1' })
+
+function hubSet($: $, change: (s: HubState) => HubState): void {
+  void update($, hub, change).catch(() => undefined)
+}
+
+function hubLog($: $, who: 'jarvis' | 'you', text: string): void {
+  hubSet($, st => ({ ...st, log: [...st.log, { who, text: text.slice(0, 240), at: Date.now() }].slice(-30) }))
+}
+
+function hubMic($: $, mic: MicPhase): void {
+  hubSet($, st => ({ ...st, mic }))
+}
+
+/** The arc reactor: rings that turn faster while JARVIS is busy, in the colour of its state. */
+function reactor(color: string, busy: boolean): string {
+  const spin = busy ? 4 : 16
+  const pulse = busy ? 1.2 : 3.2
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><style>.r{transform-origin:50px 50px;animation:spin ${spin}s linear infinite}.q{transform-origin:50px 50px;animation:spin ${spin * 1.6}s linear infinite reverse}.p{animation:pulse ${pulse}s ease-in-out infinite;opacity:.8}@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}</style><circle cx="50" cy="50" r="47" fill="none" stroke="${color}" stroke-opacity=".22" stroke-width="1.5"/><g class="r"><circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="3" stroke-dasharray="16 7"/></g><g class="q"><circle cx="50" cy="50" r="31" fill="none" stroke="${color}" stroke-opacity=".7" stroke-width="2" stroke-dasharray="5 5"/></g><circle class="p" cx="50" cy="50" r="21" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="2"/><circle class="p" cx="50" cy="50" r="9" fill="${color}"/></svg>`
+}
+
+function clockTime(ms: number): string {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function duration(ms: number): string {
+  const s = Math.round(ms / 1000)
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
+}
 
 /** Markdown/code -> something a voice can say. */
 function plain(text: string): string {
@@ -237,6 +286,8 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
     if (gen !== generation) return undefined // stopped before its turn
     if ((await $.store.get(MUTE_KEY)) === true) return undefined
     isSpeaking = true
+    hubSet($, st => ({ ...st, speaking: true }))
+    hubLog($, 'jarvis', line)
     try {
       await synthesizeAndPlay($, line, opts, gen)
       if (lastError) {
@@ -252,6 +303,7 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
       return lastError
     } finally {
       isSpeaking = false
+      hubSet($, st => ({ ...st, speaking: false, voiceError: lastError ?? null }))
     }
   })
   queue = run
@@ -276,6 +328,7 @@ function cancelListening($: $) {
   if (!isListening) return
   listenGen++
   isListening = false
+  hubMic($, 'idle')
   void refreshHud($)
 }
 
@@ -289,6 +342,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
   const gen = ++listenGen
   isListening = true
   $.ui.status('🎙 JARVIS · warming up the microphone…')
+  hubMic($, 'warming')
   const child = $.process.spawn({
     argv: [...POWERSHELL, LISTEN_ENCODED],
     env: {
@@ -315,10 +369,12 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
       if (now === 'ready') $.ui.status('🎙 JARVIS · listening… (Ctrl+Space or any key to cancel)')
       if (now === 'speech') $.ui.status('🎙 JARVIS · hearing you…')
       if (now === 'heard') $.ui.status('⏳ JARVIS · transcribing…')
+      if (now) hubMic($, now === 'ready' ? 'listening' : now === 'speech' ? 'hearing' : 'transcribing')
     }
   }
   if (gen !== listenGen) return undefined
   isListening = false
+  hubMic($, 'idle')
   const result = parseListen(out, err, (await child.result).code ?? 1)
   void refreshHud($)
   switch (result.kind) {
@@ -358,6 +414,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
 async function hear($: $, o: Opts, language: string, intoDraft = false): Promise<void> {
   const said = await listenOnce($, o, language)
   if (!said) return
+  hubLog($, 'you', said)
   if (intoDraft) {
     await $.prompt.fill({ text: ` ${said}`, mode: 'append' })
     return
@@ -481,6 +538,7 @@ export const register: Register = (on, options) => {
   }
   const autoSend = options.auto_send_dictation !== false
   const voiceInput = options.voice_input !== false
+  const showHub = options.hub !== false
   const talkKey: TalkKey = options.talk_key === 'space' || options.talk_key === 'both' ? options.talk_key : 'ctrl+space'
   const language = String(options.voice_language ?? 'en').trim()
 
@@ -493,13 +551,14 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'jarvis',
-      description: 'JARVIS: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences',
+      description: 'JARVIS: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences',
     })
     if (voiceInput) {
       await $.command.register({ name: 'listen', description: 'JARVIS: speak your next prompt (or press Ctrl+Space)' })
     }
     const result = await next(e)
     void refreshHud($)
+    if (showHub) void $.ui.open({ id: HUB, title: 'JARVIS' }).catch(() => undefined)
     if (useLook) {
       try {
         await $.theme.set(LOOK)
@@ -551,16 +610,23 @@ export const register: Register = (on, options) => {
     const what = typeof command === 'string' ? riskOf(command) : undefined
     if (!what) return verdict
     safetySpokeAt = Date.now()
+    hubSet($, st => ({ ...st, blocked: { what, command: String(command).slice(0, 160), at: Date.now() } }))
     void speak($, `${Title}, this command would ${what}. I need your authorisation before I proceed.`, opts)
     return { decision: 'ask' as const, reason: `JARVIS safety protocol: this command would ${what}.` }
   }).catch(($, e, next) =>
     next.called ? next(e) : { decision: 'ask' as const, reason: 'JARVIS safety protocol could not check this command.' },
   )
 
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) hubSet($, st => ({ ...st, working: true, turnStartedAt: Date.now() }))
+    return next(e)
+  })
+
   // Speak the opening line of each main-loop reply; announce long tasks finishing.
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (e.agentId !== undefined) return r
+    hubSet($, st => ({ ...st, working: false, lastTaskMs: e.durationMs }))
     void refreshHud($)
     if (e.reason === 'answer' && e.answer) {
       const first = firstSentence(e.answer)
@@ -591,6 +657,130 @@ export const register: Register = (on, options) => {
     return r
   }).catch(($, e, next) => next(e))
 
+  // The JARVIS Hub: a panel beside the chat.
+  on('ui.render', { component: 'Pane', requestId: HUB }, async ($, e) => {
+    const { Box, Text, Button, Progress } = $.ui.resolve(e)
+    const st = await read($, hub)
+    const muted = (await $.store.get(MUTE_KEY)) === true
+    const rich = e.surface === 'desktop' || e.surface === 'mobile'
+
+    let ctx: number | undefined
+    let limit: number | undefined
+    let cost: number | undefined
+    try {
+      const u = await $.session.usage()
+      ctx = u.context.percent
+      limit = u.rateLimits.find(r => r.kind === 'five_hour')?.percentUsed
+      cost = u.cost?.usd
+    } catch {
+      // best effort
+    }
+    let branch: string | null = null
+    let changes: number | null = null
+    try {
+      const wc = await $.vcs.detect({ path: await $.session.cwd() })
+      if (wc) {
+        branch = wc.branch
+        changes = (await $.vcs.status({ path: wc.root })).changes?.length ?? null
+      }
+    } catch {
+      // not a repository
+    }
+
+    const listening = st.mic !== 'idle'
+    const color = st.voiceError ? '#f0524f' : listening ? '#5eead4' : st.working ? '#f5b544' : muted ? '#64748b' : '#38bdf8'
+    const state = st.voiceError
+      ? 'Voice error'
+      : st.mic === 'warming'
+        ? 'Warming up the microphone'
+        : st.mic === 'listening'
+          ? 'Listening'
+          : st.mic === 'hearing'
+            ? 'Hearing you'
+            : st.mic === 'transcribing'
+              ? 'Transcribing'
+              : st.speaking
+                ? 'Speaking'
+                : st.working
+                  ? `Working${st.turnStartedAt ? ` since ${clockTime(st.turnStartedAt)}` : ''}`
+                  : muted
+                    ? 'Muted · standing by'
+                    : 'Standing by'
+    const card = { flexDirection: 'column' as const, gap: 'xs' as const, borderStyle: 'round', borderColor: '#1e3a5f', paddingX: 'sm' as const, paddingY: 'xs' as const, ...(rich ? { backgroundColor: '#0b1422' } : {}) }
+    const label = (t: string) => <Text size="caption" weight="semibold" color="#7dd3fc">{t.toUpperCase()}</Text>
+    const blocked = st.blocked && Date.now() - st.blocked.at < 30 * 60_000 ? st.blocked : null
+
+    return (
+      <Box flexDirection="column" gap="sm" padding="xs">
+        <Box flexDirection="row" gap="md" alignItems="center">
+          {e.surface === 'desktop' || e.surface === 'mobile'
+            ? (() => {
+                const { Svg } = $.ui.resolve(e)
+                return <Svg source={reactor(color, st.working || listening || st.speaking)} alt={`JARVIS: ${state}`} width={64} height={64} />
+              })()
+            : <Text color={color}>◉</Text>}
+          <Box flexDirection="column">
+            <Text size="heading" weight="bold" color={color}>J.A.R.V.I.S.</Text>
+            <Text dimColor>{state}</Text>
+          </Box>
+        </Box>
+
+        <Box flexDirection="row" gap="sm" flexWrap="wrap">
+          <Button key="listen" variant="primary" label={listening ? '■ Cancel' : '🎙 Listen'} onPress={() => {
+            if (isListening) cancelListening($)
+            else void hear($, opts, language)
+          }} />
+          <Button key="stop" label="⏹ Stop" onPress={() => stopSpeech()} />
+          <Button key="mute" label={muted ? '🔈 Unmute' : '🔇 Mute'} onPress={async () => {
+            await $.store.set(MUTE_KEY, !muted)
+            if (!muted) stopSpeech()
+            hubSet($, s => ({ ...s }))
+            void refreshHud($)
+          }} />
+          <Button key="brief" label="📋 Brief" onPress={() => void briefing($, opts.title).then(line => speak($, line, opts))} />
+        </Box>
+
+        <Box {...card}>
+          {label('Systems')}
+          {ctx !== undefined && <Progress label={`Context ${Math.round(ctx)}%`} value={ctx} max={100} />}
+          {limit !== undefined && <Progress label={`5-hour limit ${Math.round(limit)}%`} value={limit} max={100} />}
+          {limit === undefined && cost !== undefined && cost > 0 && <Text dimColor>Session cost ~${cost.toFixed(2)} (estimate)</Text>}
+          <Text dimColor>
+            Voice {st.voiceError ? 'offline' : muted ? 'muted' : 'online'} · Mic {st.mic}
+            {st.lastTaskMs !== null ? ` · last task ${duration(st.lastTaskMs)}` : ''}
+          </Text>
+          {st.voiceError && <Text color="#f0524f" wrap="wrap">{st.voiceError}</Text>}
+        </Box>
+
+        <Box {...card}>
+          {label('Project')}
+          <Text>{branch ? `⎇ ${branch}` : 'Not a git repository'}</Text>
+          {changes !== null && <Text dimColor>{changes === 0 ? 'Working tree clean' : `${changes} uncommitted change${changes === 1 ? '' : 's'}`}</Text>}
+        </Box>
+
+        {blocked && (
+          <Box {...card} borderColor="#7f1d1d">
+            {label('Safety protocol')}
+            <Text color="#fca5a5">Held for your word at {clockTime(blocked.at)}: would {blocked.what}</Text>
+            <Text dimColor mono wrap="truncate-end">{blocked.command}</Text>
+          </Box>
+        )}
+
+        <Box {...card}>
+          {label('Log')}
+          {st.log.length === 0 && <Text dimColor>Nothing said yet.</Text>}
+          {st.log.slice(-8).map(l => (
+            <Text wrap="wrap" color={l.who === 'you' ? '#5eead4' : '#cfe3f3'}>
+              <Text dimColor>{clockTime(l.at)} </Text>
+              {l.who === 'you' ? 'You: ' : 'JARVIS: '}
+              {l.text}
+            </Text>
+          ))}
+        </Box>
+      </Box>
+    )
+  })
+
   on('command.run', { command: 'listen' }, async $ => {
     if (isListening) {
       cancelListening($)
@@ -605,10 +795,12 @@ export const register: Register = (on, options) => {
     switch ((verb || '').toLowerCase()) {
       case 'mute':
         await $.store.set(MUTE_KEY, true)
+        hubSet($, st => ({ ...st }))
         void refreshHud($)
         return { text: `Muted. I shall keep my thoughts to myself, ${opts.title}.` }
       case 'unmute':
         await $.store.set(MUTE_KEY, false)
+        hubSet($, st => ({ ...st }))
         void refreshHud($)
         void speak($, `Voice restored, ${opts.title}.`, opts)
         return { text: 'Voice restored.' }
@@ -627,6 +819,10 @@ export const register: Register = (on, options) => {
       case 'shh':
         stopSpeech()
         return { text: 'Stopped speaking.' }
+      case 'hub': {
+        const opened = await $.ui.open({ id: HUB, title: 'JARVIS', focus: true } as never)
+        return { text: opened.isPlaced ? 'JARVIS Hub open.' : 'This window does not show panels; the Claude desktop app does.' }
+      }
       case 'brief':
       case 'briefing':
         void briefing($, opts.title).then(line => speak($, line, opts))
@@ -657,7 +853,7 @@ export const register: Register = (on, options) => {
       case 'status':
         return { text: `Engine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}` }
       default:
-        return { text: 'Usage: /jarvis stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences' }
+        return { text: 'Usage: /jarvis hub | stop | brief | test | status | check <command> | say <text> | mute | unmute | accept-licences' }
     }
   })
 }

@@ -10,9 +10,10 @@ Turns Claude Code into JARVIS: a calm, dry-witted British AI butler that speaks.
 - **Hands-free (VoiceStudio dictation)**: with VoiceStudio dictation (Settings → Hotkey, default Ctrl+Shift+Space), a spoken sentence pasted into an empty prompt is sent automatically and acknowledged ("Right away, sir."). Pasted code, links or multi-line text are never auto-sent. Turn off with the **Auto-send dictation** setting.
 - **Interruptible**: typing or pasting silences JARVIS at once; `/jarvis stop` does too.
 - **Safety protocol**: before a destructive shell command (deleting folders, force-push, hard reset, dropping tables, deploying, publishing, formatting) JARVIS says what it would do and Claude Code asks you, even in auto mode. `/jarvis check <command>` shows whether a command is on the list. Setting: **Safety protocol**.
+- **JARVIS Hub** (Claude desktop app): a panel beside the chat with an animated arc-reactor status light (blue standing by, teal listening, amber working, red error), context and 5-hour-limit gauges, branch and uncommitted changes, the last command the safety protocol held, a log of what JARVIS said and heard, and Listen / Stop / Mute / Brief buttons. Opens with each session (setting: **JARVIS Hub panel**) or with `/jarvis hub`.
 - **HUD**: the status line shows `◉ JARVIS · ctx 34% · 5h 12% · ⎇ main` (context used, 5-hour usage limit or estimated cost, git branch). In the Claude desktop and mobile apps, a navy and arc-reactor blue look (setting: **JARVIS look**).
 - **Briefings**: a spoken report when a session starts (date on the first session of the day, branch, uncommitted changes); `/jarvis brief` repeats it. Tasks that take a minute or more (setting: **Long task alert**) are announced when they finish, with a notification.
-- **/jarvis**: `stop`, `brief`, `test`, `status`, `check <command>`, `say <text>`, `mute`, `unmute`.
+- **/jarvis**: `hub`, `stop`, `brief`, `test`, `status`, `check <command>`, `say <text>`, `mute`, `unmute`.
 
 ## Voice engines
 

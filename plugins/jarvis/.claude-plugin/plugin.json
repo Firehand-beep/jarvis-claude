@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
@@ -85,6 +85,12 @@
       "description": "Navy and arc-reactor blue theme in the Claude desktop and mobile apps (terminals keep their own colours).",
       "default": true
     },
+    "hub": {
+      "type": "boolean",
+      "title": "JARVIS Hub panel",
+      "description": "Open the JARVIS Hub panel (status, gauges, project, safety, log and buttons) at the start of each session. /jarvis hub opens it any time.",
+      "default": true
+    },
     "address_as": {
       "type": "string",
       "title": "How JARVIS addresses you",
@@ -92,5 +98,6 @@
       "description": "What JARVIS calls you: sir, ma'am, boss, your name."
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "types": "./types/index.d.ts"
 }

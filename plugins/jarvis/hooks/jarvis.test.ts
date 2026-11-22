@@ -22,6 +22,7 @@ function windowsHost(on: any, runs: Run[], statuses: (string | undefined)[] = []
     return { value: { code: 0, signal: null } }
   })
   on('ui.toast', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.status', (_: unknown, e: any) => {
     statuses.push(typeof e === 'string' ? e : e?.text)
     return { value: undefined }
@@ -213,4 +214,35 @@ test('the talk key: every form of Ctrl+Space, and Space only where chosen', () =
   expect(isTalkKey(at({ key: ' ' }), 'space')).toBe(true)
   expect(isTalkKey(at({ key: ' ' }, 'draft'), 'space')).toBe(false)
   expect(isTalkKey(at({ key: 'a', ctrl: true }), 'both')).toBe(false)
+})
+
+const HUB_PANE = {
+  plugin: 'jarvis',
+  component: 'Pane',
+  requestId: 'jarvis-hub',
+  props: { title: 'JARVIS', isFocused: false, bodyColumns: 48, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
+} as const
+
+test('the hub draws its status, gauges and buttons on every surface, and Listen listens', async ($, on) => {
+  const runs: Run[] = []
+  windowsHost(on, runs, [], 'READY\nNOSPEECH\n')
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000, tokens: 80000, percent: 40 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12 }] } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('vcs.detect', () => ({ vcs: 'git', root: '/work/app', mainRoot: null, revision: 'abc', branch: 'main', defaultBranch: 'main', remote: null }))
+  on('vcs.status', () => ({ changes: [{ path: 'a.ts', state: 'modified' }], unpublished: 0 }))
+
+  for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
+    const ui = await ($.ui as any).mount({ ...HUB_PANE, surface })
+    expect((await ui.find({ type: 'Text', text: /J\.A\.R\.V\.I\.S\./ }))?.text).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /Standing by/ }))?.text).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /⎇ main/ }))?.text).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /1 uncommitted change$/ }))?.text).toBeDefined()
+    await ui.unmount()
+  }
+
+  const ui = await ($.ui as any).mount({ ...HUB_PANE, surface: 'desktop' })
+  await ui.press({ key: 'listen' })
+  await tick(100)
+  expect(runs.some(r => r.env.JARVIS_MAX_MS)).toBe(true)
+  await ui.unmount()
 })
