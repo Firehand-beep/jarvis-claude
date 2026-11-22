@@ -288,3 +288,25 @@ test('on Windows the session holds Ctrl+Space system-wide; pressing it listens',
   expect(decode(holder?.argv ?? [])).toContain('RegisterHotKey')
   expect(runs.some(r => r.env.JARVIS_MAX_MS)).toBe(true) // the press started the recorder
 })
+
+test('with ElevenLabs on Windows, JARVIS asks for raw PCM and plays it through the padded player', async ($, on) => {
+  const runs: Run[] = []
+  windowsHost(on, runs)
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'Very good, sir.', durationMs: 10, isAborted: false, turnId: 't9', reason: 'answer' })
+  await tick()
+  // default engine is VoiceStudio; the ElevenLabs request shape is checked through the options test below
+  expect(runs.some(r => r.env.JARVIS_EXT === 'pcm')).toBe(true)
+})
+
+test('ElevenLabs request: Grandfather Joe by default, PCM on Windows', { options: { provider: 'elevenlabs', elevenlabs_api_key: 'test-key' } } as any, async ($: any, on: any) => {
+  const runs: Run[] = []
+  windowsHost(on, runs)
+  on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'Very good, sir.', durationMs: 10, isAborted: false, turnId: 't10', reason: 'answer' })
+  await tick()
+  const r = runs.find(x => x.env.JARVIS_URL?.includes('elevenlabs'))
+  expect(r?.env.JARVIS_URL).toBe('https://api.elevenlabs.io/v1/text-to-speech/0lp4RIz96WD1RUtvEu3Q?output_format=pcm_24000')
+  expect(r?.env.JARVIS_EXT).toBe('pcm')
+  expect(r?.env.JARVIS_HDR_NAME).toBe('xi-api-key')
+})

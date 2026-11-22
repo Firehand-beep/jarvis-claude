@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
@@ -59,8 +59,8 @@
     "elevenlabs_voice_id": {
       "type": "string",
       "title": "ElevenLabs voice ID",
-      "description": "Default: Daniel, a calm British library voice.",
-      "default": "YAf0kHlnNFUAy45cwsfF"
+      "description": "ElevenLabs voice. Default: Grandfather Joe, a gentle, warm and wise older British voice from the ElevenLabs library (add it to My Voices first).",
+      "default": "0lp4RIz96WD1RUtvEu3Q"
     },
     "safety_protocol": {
       "type": "boolean",

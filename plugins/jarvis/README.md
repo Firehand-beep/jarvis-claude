@@ -18,6 +18,6 @@ Turns Claude Code into JARVIS: an old-school English family butler (devoted, dry
 ## Voice engines
 
 - **VoiceStudio** (default, free, local): install the VoiceStudio app and keep it running. JARVIS calls its OpenAI-compatible API at `http://127.0.0.1:3900/v1/audio/speech`. For a consistent voice, design or clone one in VoiceStudio, save it as a profile named `Jarvis` (the plugin's default voice), or set **VoiceStudio voice** to whatever name you chose.
-- **ElevenLabs** (cloud): set **Voice engine** to `elevenlabs` and paste your API key.
+- **ElevenLabs** (cloud): set **Voice engine** to `elevenlabs` and paste your API key. The default voice is Grandfather Joe (gentle, warm, older British); add it to My Voices in ElevenLabs first.
 
 Works on Windows (PowerShell playback), macOS (afplay) and Linux (paplay/aplay/ffplay).

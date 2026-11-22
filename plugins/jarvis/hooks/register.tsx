@@ -127,12 +127,14 @@ const DESIGN = 'male, middle-aged, low pitch, british accent'
 /** The HTTP request that turns `text` into audio, per provider. */
 function speechRequest(text: string, o: Opts, windows: boolean) {
   if (o.provider === 'elevenlabs') {
-    if (!o.elKey) throw new Error('no ElevenLabs API key set (/config > jarvis)')
+    if (!o.elKey) throw new Error('no ElevenLabs API key set (/plugin configure jarvis@jarvis-claude)')
+    // Windows gets raw 24 kHz 16-bit PCM, the format VoiceStudio sends, so it plays through the same
+    // padded, interruptible player; elsewhere an MP3.
     return {
-      url: `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(o.elVoice)}?output_format=mp3_44100_128`,
+      url: `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(o.elVoice)}?output_format=${windows ? 'pcm_24000' : 'mp3_44100_128'}`,
       body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5' }),
       header: ['xi-api-key', o.elKey] as const,
-      ext: 'mp3',
+      ext: windows ? 'pcm' : 'mp3',
     }
   }
   const isDefault = o.vsVoice === 'default' || o.vsVoice === ''
@@ -590,7 +592,7 @@ export const register: Register = (on, options) => {
     vsUrl: String(options.voicestudio_url || 'http://127.0.0.1:3900'),
     vsVoice: String(options.voicestudio_voice || 'default'),
     elKey: String(options.elevenlabs_api_key ?? ''),
-    elVoice: String(options.elevenlabs_voice_id || 'YAf0kHlnNFUAy45cwsfF'),
+    elVoice: String(options.elevenlabs_voice_id || '0lp4RIz96WD1RUtvEu3Q'),
     title: String(options.address_as || 'sir'),
   }
   const autoSend = options.auto_send_dictation !== false
