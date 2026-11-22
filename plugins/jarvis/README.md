@@ -2,7 +2,7 @@
 
 Turns Claude Code into Alfred: an old-school English family butler (devoted, dry, gently protective) who runs your machines and speaks.
 
-- **Persona**: an old-school family butler, warm under a formal manner, with understated wit and a habit of noticing when you work too late. Alfred calls you "sir" (configurable: **How Alfred addresses you**, e.g. "Master" and your first name) and opens every reply with one spoken summary sentence.
+- **Persona**: a dignified English gentleman's gentleman: formal, unhurried speech; dry, deadpan wit; loyal but no yes-man (says plainly when an idea is unwise, then helps); your conscience when you cut corners or burn out; care shown through action (the next step ready, a word about the hour); unflappable in a crisis. Alfred calls you "sir" (configurable: **How Alfred addresses you**, e.g. "Master" and your first name) and opens every reply with one spoken summary sentence.
 - **Voice out**: that sentence is read aloud at the end of each turn.
 - **Spoken alerts**: permission prompts and idle notices are announced.
 - **Greeting**: a time-of-day greeting when a session starts.

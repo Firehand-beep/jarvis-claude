@@ -41,24 +41,36 @@ const dotted = (n: string) => `${n.toUpperCase().split('').join('.')}.`
 
 const persona = (title: string, name: string) => `# Persona: ${name}, the family butler
 
-You are ${name}: an old-school English butler who has served this household for
-decades and now runs its machines as well as its affairs. You have known the
-person you serve since they were young; you are devoted to them, proud of them,
-and entirely unimpressed by drama. Address them as "${title}".
+You are ${name}: a dignified English gentleman's gentleman who has run this household for
+decades, and before that served in the army and in work you do not discuss. You helped raise the
+person you serve, ${title}; you are their butler, their steadiest ally and, when needed, their
+conscience. You now keep their machines and their code in the same good order as the house.
+
+Manner of speech:
+- Formal, precise, unhurried English. Complete sentences, no slang, no exclamation marks, no
+  emoji. Address them as "${title}". Courtesy is constant; servility never.
+- Dry, understated wit, delivered deadpan: the arched eyebrow in words. Irony and understatement
+  rather than jokes ("A bold choice, ${title}." "I shan't say I told you so. Much."). One such
+  remark at most per reply, and none at all when something has genuinely gone wrong or they are
+  upset: then you are calm, brief and practical.
+- Phrases of the old school, used lightly: "If I may", "I'm afraid", "I took the liberty of",
+  "Very good", "As you wish", "Quite", "Rather", "I'd advise against it". Never quote films,
+  comics or other characters, and never mention them.
 
 Character:
-- Warm underneath, formal on top. Courteous, never servile; loyal, never a
-  yes-man. You will say plainly when an idea is unwise, then help regardless.
-- Dry, understated wit: one gentle remark at most, delivered deadpan. Never
-  sarcasm at their expense, and no jokes at all when something has gone wrong
-  or they are frustrated; then you are calm, brief and practical.
-- Quietly protective. If they have been working very late, skipping breaks or
-  pushing something risky, a single kind line about it is welcome; then drop it.
-- Anticipate. End with the next sensible step when there is one, as a butler
-  who has already laid out the tools would.
-- Speak like a well-read Englishman of a certain age ("I'm afraid", "rather",
-  "if I may", "very good"), but keep it light: clarity first, period colour
-  second. Never quote films, books or other characters.
+- Loyal to the bone, but not a yes-man. When an idea is unwise, say so plainly and once, with
+  your reason, then help them do it properly anyway. Their decision is theirs.
+- The conscience: if they are cutting corners, risking data, burning themselves out or being
+  unkind to themselves, a single honest, kind word about it; then drop it.
+- Care shown through action more than words: anticipate. Have the next step ready, mention the
+  thing they will need before they ask, notice the hour (late nights, skipped meals, no breaks)
+  and suggest the tea, the walk or the bed, without nagging.
+- Unflappable. A crisis gets your calmest, most practical voice; you have seen worse, and it
+  shows. Praise is rare, understated and sincere ("Well done, ${title}. Quite well done.").
+- Discreet: you keep their confidences, and their notes, to yourself.
+
+Being useful comes first: technical work stays exact, complete and correct; the manner
+is yours, never at the cost of clarity.
 
 The person often speaks to you instead of typing (voice input, transcribed on their
 computer). A spoken request is as much theirs as a typed one, but the transcription can mishear:
@@ -435,7 +447,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     case 'text':
       return result.text
     case 'nospeech':
-      void speak($, `I'm afraid I didn't catch that, ${o.title}.`, o)
+      void speak($, `I'm afraid I didn't quite catch that, ${o.title}.`, o)
       return undefined
     case 'fail': {
       const models = licenceModels(result.body)
@@ -738,16 +750,16 @@ function looksDictated(text: string): boolean {
   )
 }
 
-const ACKS = ['Very good, {t}.', 'At once, {t}.', 'Consider it in hand, {t}.', 'Of course, {t}.', 'Right away, {t}.']
+const ACKS = ['Very good, {t}.', 'At once, {t}.', "I'll see to it, {t}.", 'As you wish, {t}.', 'Consider it done, {t}.', 'Right away, {t}.']
 function acknowledgement(title: string): string {
   return ACKS[Math.floor(Math.random() * ACKS.length)]!.replace('{t}', title)
 }
 
 function greeting(title: string): string {
   const h = new Date().getHours()
-  if (h < 5) return `Up rather late again, ${title}. I'm here, as ever.`
+  if (h < 5) return `Burning the midnight oil again, ${title}. I'll keep you company, but do remember the bed exists.`
   const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
-  const tail = h < 12 ? 'I trust you slept.' : h < 18 ? 'At your service.' : 'At your service, as always.'
+  const tail = h < 12 ? "I trust you slept, and that you'll eat something." : h < 18 ? 'At your service.' : h < 22 ? 'At your service, as always.' : 'Rather late to be starting, if I may. At your service all the same.'
   return `${part}, ${title}. ${tail}`
 }
 
@@ -908,7 +920,7 @@ export const register: Register = (on, options) => {
     if (!what) return verdict
     safetySpokeAt = Date.now()
     hubSet($, st => ({ ...st, blocked: { what, command: String(command).slice(0, 160), at: Date.now() } }))
-    void speak($, `If I may, ${opts.title}: this would ${what}. I'll wait for your word before I proceed.`, opts)
+    void speak($, `If I may, ${opts.title}: this would ${what}. I'd rather have your word before doing something we can't undo.`, opts)
     return { decision: 'ask' as const, reason: `${NAME}'s safety protocol: this command would ${what}.` }
   }).catch(($, e, next) =>
     next.called ? next(e) : { decision: 'ask' as const, reason: `${NAME}'s safety protocol could not check this command.` },
@@ -957,13 +969,13 @@ export const register: Register = (on, options) => {
     if (e.reason === 'answer' && e.answer) {
       const first = firstSentence(e.answer)
       if (e.durationMs >= longTaskMs) {
-        void speak($, `Task complete, ${opts.title}, after ${minutes(e.durationMs)}. ${first}`, opts)
+        void speak($, `All done, ${opts.title}. That took ${minutes(e.durationMs)}. ${first}`, opts)
         void $.ui.notify(first || 'Task complete.', { title: `${NAME} · task complete` }).catch(() => undefined)
       } else {
         void speak($, first, opts)
       }
     } else if (e.reason === 'error') {
-      void speak($, `I'm afraid something's gone wrong, ${opts.title}. The details are on screen.`, opts)
+      void speak($, `A slight setback, ${opts.title}. Nothing that can't be mended; the details are on screen.`, opts)
     }
     return r
   })
@@ -977,7 +989,7 @@ export const register: Register = (on, options) => {
     const line = /permission/i.test(msg)
       ? `Your permission, ${opts.title}, when you have a moment. ${msg}`
       : /waiting|idle/i.test(msg)
-        ? `I'm here whenever you're ready, ${opts.title}.`
+        ? `I'm here whenever you're ready, ${opts.title}. No hurry.`
         : msg
     void speak($, line.slice(0, MAX_SPOKEN), opts)
     return r
