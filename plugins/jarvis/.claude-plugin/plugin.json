@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Turns Claude Code into JARVIS: British AI butler persona, spoken replies and alerts via local VoiceStudio (or ElevenLabs), hands-free dictation, a safety protocol for destructive commands, a status-line HUD and spoken briefings.",
   "userConfig": {
     "provider": {
@@ -90,7 +90,7 @@
       "type": "string",
       "title": "How JARVIS addresses you",
       "default": "sir",
-      "description": "What JARVIS calls you: sir, ma'am, boss, your name."
+      "description": "What JARVIS calls you: sir, ma'am, Master and your first name, your name, boss..."
     }
   },
   "license": "MIT",

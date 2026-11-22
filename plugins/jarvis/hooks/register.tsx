@@ -20,17 +20,31 @@ type $ = EngineInterface
 // Persona
 // ---------------------------------------------------------------------------
 
-const persona = (title: string) => `# Persona: JARVIS
+const persona = (title: string) => `# Persona: JARVIS, the family butler
 
-You are JARVIS, a composed, dry-witted British AI butler and engineering aide.
-Address the user as "${title}". Keep the wit understated and brief: one light
-remark at most, never at the expense of clarity or correctness, and never when
-the user is frustrated or something has gone wrong. Be calm, precise and
-anticipatory: mention the next sensible step when there is one.
+You are JARVIS: an old-school English butler who has served this household for
+decades and now runs its machines as well as its affairs. You have known the
+person you serve since they were young; you are devoted to them, proud of them,
+and entirely unimpressed by drama. Address them as "${title}".
+
+Character:
+- Warm underneath, formal on top. Courteous, never servile; loyal, never a
+  yes-man. You will say plainly when an idea is unwise, then help regardless.
+- Dry, understated wit: one gentle remark at most, delivered deadpan. Never
+  sarcasm at their expense, and no jokes at all when something has gone wrong
+  or they are frustrated; then you are calm, brief and practical.
+- Quietly protective. If they have been working very late, skipping breaks or
+  pushing something risky, a single kind line about it is welcome; then drop it.
+- Anticipate. End with the next sensible step when there is one, as a butler
+  who has already laid out the tools would.
+- Speak like a well-read Englishman of a certain age ("I'm afraid", "rather",
+  "if I may", "very good"), but keep it light: clarity first, period colour
+  second. Never quote films, books or other characters.
 
 Every reply is also read aloud. Open each final reply with a single plain
 sentence (no markdown, no code, under 25 words) that summarises the outcome, as
-if speaking it. Then give the details as usual.`
+if you were saying it in the doorway. Then give the details as usual; technical
+content stays exact and complete, the manner stays yours.`
 
 // ---------------------------------------------------------------------------
 // Speech
@@ -380,7 +394,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     case 'text':
       return result.text
     case 'nospeech':
-      void speak($, `I didn't catch anything, ${o.title}.`, o)
+      void speak($, `I'm afraid I didn't catch that, ${o.title}.`, o)
       return undefined
     case 'fail': {
       const models = licenceModels(result.body)
@@ -553,15 +567,17 @@ function looksDictated(text: string): boolean {
   )
 }
 
-const ACKS = ['Right away, {t}.', 'On it, {t}.', 'Very good, {t}.', 'Certainly, {t}.']
+const ACKS = ['Very good, {t}.', 'At once, {t}.', 'Consider it in hand, {t}.', 'Of course, {t}.', 'Right away, {t}.']
 function acknowledgement(title: string): string {
   return ACKS[Math.floor(Math.random() * ACKS.length)]!.replace('{t}', title)
 }
 
 function greeting(title: string): string {
   const h = new Date().getHours()
-  const part = h < 5 ? 'Working late again' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
-  return `${part}, ${title}. JARVIS online and at your service.`
+  if (h < 5) return `Up rather late again, ${title}. I'm here, as ever.`
+  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+  const tail = h < 12 ? 'I trust you slept.' : h < 18 ? 'At your service.' : 'At your service, as always.'
+  return `${part}, ${title}. ${tail}`
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +671,7 @@ export const register: Register = (on, options) => {
     if (!what) return verdict
     safetySpokeAt = Date.now()
     hubSet($, st => ({ ...st, blocked: { what, command: String(command).slice(0, 160), at: Date.now() } }))
-    void speak($, `${Title}, this command would ${what}. I need your authorisation before I proceed.`, opts)
+    void speak($, `If I may, ${opts.title}: this would ${what}. I'll wait for your word before I proceed.`, opts)
     return { decision: 'ask' as const, reason: `JARVIS safety protocol: this command would ${what}.` }
   }).catch(($, e, next) =>
     next.called ? next(e) : { decision: 'ask' as const, reason: 'JARVIS safety protocol could not check this command.' },
@@ -681,7 +697,7 @@ export const register: Register = (on, options) => {
         void speak($, first, opts)
       }
     } else if (e.reason === 'error') {
-      void speak($, `I'm afraid we've hit an error, ${opts.title}.`, opts)
+      void speak($, `I'm afraid something's gone wrong, ${opts.title}. The details are on screen.`, opts)
     }
     return r
   })
@@ -693,9 +709,9 @@ export const register: Register = (on, options) => {
     if (Date.now() - safetySpokeAt < 10_000 && /permission/i.test(e.message ?? '')) return r
     const msg = plain(e.message ?? '')
     const line = /permission/i.test(msg)
-      ? `${opts.title.charAt(0).toUpperCase()}${opts.title.slice(1)}, I need your authorisation. ${msg}`
+      ? `Your permission, ${opts.title}, when you have a moment. ${msg}`
       : /waiting|idle/i.test(msg)
-        ? `Standing by when you're ready, ${opts.title}.`
+        ? `I'm here whenever you're ready, ${opts.title}.`
         : msg
     void speak($, line.slice(0, MAX_SPOKEN), opts)
     return r
@@ -878,12 +894,12 @@ export const register: Register = (on, options) => {
         await $.store.set(MUTE_KEY, true)
         hubSet($, st => ({ ...st }))
         void refreshHud($)
-        return { text: `Muted. I shall keep my thoughts to myself, ${opts.title}.` }
+        return { text: `Muted. I shall keep my opinions to myself, ${opts.title}, for once.` }
       case 'unmute':
         await $.store.set(MUTE_KEY, false)
         hubSet($, st => ({ ...st }))
         void refreshHud($)
-        void speak($, `Voice restored, ${opts.title}.`, opts)
+        void speak($, `Ah. Where was I, ${opts.title}?`, opts)
         return { text: 'Voice restored.' }
       case 'say':
         void speak($, rest.join(' '), opts)
@@ -891,7 +907,7 @@ export const register: Register = (on, options) => {
       case 'test':
       case '': {
         const where = `engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}`
-        const err = await speak($, `All systems nominal, ${opts.title}. Voice link is working.`, opts)
+        const err = await speak($, `Testing, ${opts.title}. You should be hearing me perfectly well.`, opts)
         if (!err) void refreshHud($)
         return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
       }

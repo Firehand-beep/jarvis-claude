@@ -1,8 +1,8 @@
 # JARVIS for Claude Code
 
-Turns Claude Code into JARVIS: a calm, dry-witted British AI butler that speaks.
+Turns Claude Code into JARVIS: an old-school English family butler (devoted, dry, gently protective) who runs your machines and speaks.
 
-- **Persona**: added to the system prompt. JARVIS calls you "sir" (configurable) and opens every reply with one spoken summary sentence.
+- **Persona**: an old-school family butler, warm under a formal manner, with understated wit and a habit of noticing when you work too late. JARVIS calls you "sir" (configurable: **How JARVIS addresses you**, e.g. "Master" and your first name) and opens every reply with one spoken summary sentence.
 - **Voice out**: that sentence is read aloud at the end of each turn.
 - **Spoken alerts**: permission prompts and idle notices are announced.
 - **Greeting**: a time-of-day greeting when a session starts.
