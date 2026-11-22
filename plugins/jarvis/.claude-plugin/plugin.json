@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Turns Claude Code into JARVIS: a British AI butler persona that speaks its replies and alerts through local VoiceStudio (or ElevenLabs).",
   "userConfig": {
     "provider": {

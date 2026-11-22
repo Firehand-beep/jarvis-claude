@@ -94,14 +94,18 @@ $body = [Text.Encoding]::UTF8.GetBytes($env:JARVIS_BODY)
 Invoke-WebRequest -UseBasicParsing -Method Post -Uri $env:JARVIS_URL -Headers $h -ContentType 'application/json' -Body $body -OutFile $f -TimeoutSec 90
 try {
   if ($env:JARVIS_EXT -eq 'wav') {
-    (New-Object System.Media.SoundPlayer $f).PlaySync()
+    $sp = New-Object System.Media.SoundPlayer $f
+    $sp.Load()
+    $sp.PlaySync()
+    # Let Windows drain its audio buffer before this process exits, or the tail is clipped.
+    Start-Sleep -Milliseconds 700
   } else {
     Add-Type -AssemblyName PresentationCore
     $p = New-Object System.Windows.Media.MediaPlayer
     $p.Open([Uri]$f)
     Start-Sleep -Milliseconds 300
     $p.Play()
-    Start-Sleep -Milliseconds ([int]((Get-Item $f).Length * 8 / 128) + 400)
+    Start-Sleep -Milliseconds ([int]((Get-Item $f).Length * 8 / 128) + 900)
     $p.Close()
   }
 } finally { Remove-Item $f -ErrorAction SilentlyContinue }
