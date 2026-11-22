@@ -1,0 +1,11 @@
+{
+  "name": "jarvis-claude",
+  "owner": { "name": "Firehand-beep" },
+  "plugins": [
+    {
+      "name": "jarvis",
+      "source": "./plugins/jarvis",
+      "description": "JARVIS for Claude Code: British AI butler persona with spoken replies and alerts via local VoiceStudio or ElevenLabs."
+    }
+  ]
+}

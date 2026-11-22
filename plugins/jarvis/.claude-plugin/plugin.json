@@ -1,0 +1,49 @@
+{
+  "name": "jarvis",
+  "version": "0.3.0",
+  "description": "Turns Claude Code into JARVIS: a British AI butler persona that speaks its replies and alerts through local VoiceStudio (or ElevenLabs).",
+  "userConfig": {
+    "provider": {
+      "type": "string",
+      "title": "Voice engine",
+      "description": "voicestudio = free and local (VoiceStudio app running on this PC). elevenlabs = cloud, needs an API key.",
+      "options": [
+        "voicestudio",
+        "elevenlabs"
+      ],
+      "default": "voicestudio"
+    },
+    "voicestudio_url": {
+      "type": "string",
+      "title": "VoiceStudio address",
+      "description": "Where the VoiceStudio backend listens.",
+      "default": "http://127.0.0.1:3900"
+    },
+    "voicestudio_voice": {
+      "type": "string",
+      "title": "VoiceStudio voice",
+      "description": "Name or ID of a voice profile saved in VoiceStudio (e.g. JARVIS). 'default' designs a British male voice on the fly.",
+      "default": "Jarvis"
+    },
+    "elevenlabs_api_key": {
+      "type": "string",
+      "title": "ElevenLabs API key",
+      "description": "Only needed when the voice engine is elevenlabs.",
+      "sensitive": true,
+      "default": ""
+    },
+    "elevenlabs_voice_id": {
+      "type": "string",
+      "title": "ElevenLabs voice ID",
+      "description": "Default: Daniel, a calm British library voice.",
+      "default": "YAf0kHlnNFUAy45cwsfF"
+    },
+    "address_as": {
+      "type": "string",
+      "title": "How JARVIS addresses you",
+      "default": "sir",
+      "description": "What JARVIS calls you: sir, ma'am, boss, your name."
+    }
+  },
+  "license": "MIT"
+}
