@@ -232,12 +232,25 @@ test('the hub draws its status, gauges and buttons on every surface, and Listen 
   on('vcs.detect', () => ({ vcs: 'git', root: '/work/app', mainRoot: null, revision: 'abc', branch: 'main', defaultBranch: 'main', remote: null }))
   on('vcs.status', () => ({ changes: [{ path: 'a.ts', state: 'modified' }], unpublished: 0 }))
 
-  for (const surface of ['desktop', 'terminal', 'mobile'] as const) {
+  // The terminal draws text cards.
+  const term = await ($.ui as any).mount({ ...HUB_PANE, surface: 'terminal' })
+  expect((await term.find({ type: 'Text', text: /J\.A\.R\.V\.I\.S\./ }))?.text).toBeDefined()
+  expect((await term.find({ type: 'Text', text: /Standing by/ }))?.text).toBeDefined()
+  expect((await term.find({ type: 'Text', text: /⎇ main/ }))?.text).toBeDefined()
+  expect((await term.find({ type: 'Text', text: /1 uncommitted change$/ }))?.text).toBeDefined()
+  await term.unmount()
+
+  // The apps draw the designed panel, filled with the live values.
+  for (const surface of ['desktop', 'mobile'] as const) {
     const ui = await ($.ui as any).mount({ ...HUB_PANE, surface })
-    expect((await ui.find({ type: 'Text', text: /J\.A\.R\.V\.I\.S\./ }))?.text).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /Standing by/ }))?.text).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /⎇ main/ }))?.text).toBeDefined()
-    expect((await ui.find({ type: 'Text', text: /1 uncommitted change$/ }))?.text).toBeDefined()
+    const svg = await ui.find({ type: 'Svg' })
+    const source = String(svg?.props?.source ?? svg?.source ?? '')
+    expect(source).toContain('class="state-standby voice-on"')
+    expect(source).toContain('>STANDING BY</text>')
+    expect(source).toContain('id="git-branch">main</text>')
+    expect(source).toContain('id="git-status">1 change</text>')
+    expect(source).toContain('id="lbl-hotkey">CTRL+SPACE</text>')
+    expect(source).not.toContain('class="state-listening')
     await ui.unmount()
   }
 

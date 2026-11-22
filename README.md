@@ -4,7 +4,7 @@ A series of mods that turn Claude Code into JARVIS.
 
 | Mod | Status | What it does |
 |---|---|---|
-| `jarvis` | v0.9.0 | JARVIS Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
+| `jarvis` | v0.10.0 | JARVIS Hub panel, butler persona, spoken replies and alerts, built-in voice input (system-wide Ctrl+Space), hands-free dictation, interruptible speech, safety protocol, status-line HUD, spoken briefings and long-task alerts |
 
 ## Install
 
