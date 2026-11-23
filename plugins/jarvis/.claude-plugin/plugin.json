@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {
@@ -24,12 +24,37 @@
     "provider": {
       "type": "string",
       "title": "Voice engine",
-      "description": "voicestudio = free and local (VoiceStudio app running on this PC). elevenlabs = cloud, needs an API key.",
+      "description": "alfred = Alfred's own voice on this PC (Kokoro, free, offline; needs Python). voicestudio = the VoiceStudio app. elevenlabs = cloud, needs an API key. If the chosen one fails he falls back to his own voice, then to the Windows voice.",
       "options": [
+        "alfred",
         "voicestudio",
         "elevenlabs"
       ],
-      "default": "voicestudio"
+      "default": "alfred"
+    },
+    "alfred_voice": {
+      "type": "string",
+      "title": "Alfred's voice",
+      "description": "For engine alfred: bm_george (default, deep and mature), bm_lewis (warmer), bm_daniel (crisp), bm_fable (lighter).",
+      "default": "bm_george"
+    },
+    "voice_speed": {
+      "type": "number",
+      "title": "Speaking speed",
+      "description": "For engine alfred: 1.0 is normal; 0.95 (default) is a touch slower, as befits a butler.",
+      "default": 0.95
+    },
+    "listen_model": {
+      "type": "string",
+      "title": "Speech recognition model",
+      "description": "For engine alfred: parakeet (default, most accurate, ~480 MB once) or whisper-base (lighter, ~210 MB once).",
+      "default": "parakeet"
+    },
+    "voice_port": {
+      "type": "number",
+      "title": "Voice service port",
+      "description": "Where Alfred's own voice service listens on this PC (127.0.0.1 only).",
+      "default": 3911
     },
     "voicestudio_url": {
       "type": "string",

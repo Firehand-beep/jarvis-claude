@@ -2,6 +2,11 @@
 
 Alfred reads this to tell you what is new when he offers an update. One short line per change.
 
+## 0.20.0
+- His own voice: George, a deep British voice that runs on your PC, free and offline; VoiceStudio is no longer needed
+- Hears you on your PC too (the Parakeet speech model), so Ctrl+Space works without VoiceStudio
+- Never silent: if his voice fails, he falls back to the Windows voice
+
 ## 0.19.0
 - Updates himself: checks for a new version once a day, says what is new, and installs it when you agree
 - "/alfred update" installs the latest version; "/alfred update check" only looks

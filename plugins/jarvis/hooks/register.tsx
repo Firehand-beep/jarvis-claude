@@ -196,8 +196,14 @@ function firstSentence(text: string): string {
   return (m?.[1] ?? flat).slice(0, MAX_SPOKEN)
 }
 
+type Provider = 'alfred' | 'voicestudio' | 'elevenlabs' | 'windows'
 type Opts = {
-  provider: 'voicestudio' | 'elevenlabs'
+  provider: Exclude<Provider, 'windows'>
+  /** Alfred's own voice service (alfred_voice.py), on this computer. */
+  localUrl: string
+  localVoice: string
+  speed: number
+  asr: string
   vsUrl: string
   vsVoice: string
   elKey: string
@@ -209,8 +215,16 @@ type Opts = {
 const DESIGN = 'male, middle-aged, low pitch, british accent'
 
 /** The HTTP request that turns `text` into audio, per provider. */
-function speechRequest(text: string, o: Opts, windows: boolean) {
-  if (o.provider === 'elevenlabs') {
+function speechRequest(text: string, o: Opts, windows: boolean, provider: Provider = o.provider) {
+  if (provider === 'alfred') {
+    return {
+      url: `${o.localUrl}/v1/audio/speech`,
+      body: JSON.stringify({ model: 'kokoro', input: text, voice: o.localVoice, speed: o.speed, response_format: windows ? 'pcm' : 'wav' }),
+      header: undefined,
+      ext: windows ? 'pcm' : 'wav',
+    }
+  }
+  if (provider === 'elevenlabs') {
     if (!o.elKey) throw new Error('no ElevenLabs API key set (/plugin configure jarvis@jarvis-claude)')
     // Windows gets raw 24 kHz 16-bit PCM, the format VoiceStudio sends, so it plays through the same
     // padded, interruptible player; elsewhere an MP3.
@@ -345,9 +359,132 @@ function submitSpoken($: $, text: string): void {
   void $.prompt.submit({ text, asUser: true })
 }
 
-async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number) {
+// The last resort: Windows' own voice, which needs nothing installed. British if there is one.
+const SAPI_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$v = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo } | Where-Object { $_.Culture.Name -eq 'en-GB' } | Select-Object -First 1
+if (-not $v) { $v = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo } | Where-Object { $_.Gender -eq 'Male' } | Select-Object -First 1 }
+if ($v) { $s.SelectVoice($v.Name) }
+$s.Rate = -1
+$p = $s.SpeakAsync($env:JARVIS_TEXT)
+while (-not $p.IsCompleted) {
+  Start-Sleep -Milliseconds 100
+  [Console]::Out.WriteLine('.')
+  [Console]::Out.Flush()
+}
+`
+const SAPI_ENCODED = encodePowerShell(SAPI_SCRIPT)
+
+// Starts Alfred's voice service in the background, hidden, so it outlives any one session.
+const VOICE_START_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+$q = [string][char]34
+if (Get-Command py -ErrorAction SilentlyContinue) { $exe = 'py'; $a = @('-3') }
+elseif (Get-Command python -ErrorAction SilentlyContinue) { $exe = 'python'; $a = @() }
+else { Write-Output 'NOPY'; exit 0 }
+$a += @(($q + $env:ALFRED_VOICE_SCRIPT + $q), 'serve', '--dir', ($q + $env:ALFRED_DIR + $q), '--port', $env:ALFRED_PORT, '--voice', $env:ALFRED_VOICE, '--speed', $env:ALFRED_SPEED, '--asr', $env:ALFRED_ASR)
+Start-Process -FilePath $exe -ArgumentList $a -WindowStyle Hidden
+Write-Output 'STARTED'
+`
+const VOICE_START_ENCODED = encodePowerShell(VOICE_START_SCRIPT)
+
+let voiceServiceStarting: Promise<boolean> | undefined
+
+async function voiceServiceUp($: $, o: Opts): Promise<boolean> {
+  try {
+    const r = await $.http.fetch(`${o.localUrl}/health`)
+    return r.ok && /"engine":\s*"alfred"/.test(r.text)
+  } catch {
+    return false
+  }
+}
+
+/** Makes sure Alfred's voice service is running; waits up to `waitMs` for it to answer. */
+function ensureVoiceService($: $, o: Opts, waitMs = 20_000): Promise<boolean> {
+  voiceServiceStarting ??= (async () => {
+    if (await voiceServiceUp($, o)) return true
+    if (!(await onWindows($))) return false
+    const port = o.localUrl.split(':').pop() ?? '3911'
+    const r = await $.process.run([...POWERSHELL, VOICE_START_ENCODED], {
+      env: {
+        ALFRED_VOICE_SCRIPT: `${$.plugin.root}/hooks/alfred_voice.py`,
+        ALFRED_DIR: await memoryFolder($),
+        ALFRED_PORT: port,
+        ALFRED_VOICE: o.localVoice,
+        ALFRED_SPEED: String(o.speed),
+        ALFRED_ASR: o.asr,
+      },
+      timeoutMs: 30_000,
+    })
+    if (/NOPY/.test(r.stdout)) {
+      lastError = 'Python is not installed, so Alfred cannot start his own voice (winget install Python.Python.3.12).'
+      return false
+    }
+    for (let t = 0; t < waitMs; t += 500) {
+      await new Promise<void>(res => $.clock.after(500, () => res()))
+      if (await voiceServiceUp($, o)) return true
+    }
+    return voiceServiceUp($, o)
+  })().finally(() => {
+    voiceServiceStarting = undefined
+  })
+  return voiceServiceStarting
+}
+
+/** Says a line in Windows' built-in voice: the fallback when the others fail. */
+async function speakWindowsVoice($: $, text: string, gen: number): Promise<void> {
+  const child = $.process.spawn({ argv: [...POWERSHELL, SAPI_ENCODED], env: { JARVIS_TEXT: text } })
+  let stderr = ''
+  for await (const chunk of child) {
+    if (gen !== generation) return
+    if (chunk.stream === 'stderr') stderr += chunk.text
+  }
+  if (gen !== generation) return
+  const code = (await child.result).code ?? 1
+  if (code !== 0) throw new Error(`Windows voice failed: ${stderr.trim().slice(-200) || `exit ${code}`}`)
+}
+
+/** Speaks with the chosen engine, then falls back: Alfred's own voice, then Windows' voice. */
+async function speakWithFallback($: $, text: string, o: Opts, gen: number): Promise<void> {
+  const windows = await onWindows($)
+  const order: Provider[] = [o.provider]
+  if (windows && o.provider !== 'alfred') order.push('alfred')
+  if (windows) order.push('windows')
+  let first: unknown
+  for (const p of order) {
+    if (gen !== generation) return
+    try {
+      if (p === 'windows') await speakWindowsVoice($, text, gen)
+      else if (p === 'alfred') {
+        try {
+          await synthesizeAndPlay($, text, o, gen, p)
+        } catch (err) {
+          // Not running yet (first line of the day, or after a restart): start it and try once more.
+          if (gen !== generation || !(await ensureVoiceService($, o))) throw err
+          await synthesizeAndPlay($, text, o, gen, p)
+        }
+      } else await synthesizeAndPlay($, text, o, gen, p)
+      if (first !== undefined) {
+        const why = first instanceof Error ? first.message : String(first)
+        $.ui.log(`${NAME}: ${o.provider} voice failed (${why.slice(0, 200)}); spoke with ${p} instead`, { to: 'debug' })
+        fellBackTo = p
+      } else fellBackTo = undefined
+      return
+    } catch (err) {
+      first ??= err
+    }
+  }
+  throw first
+}
+
+/** The engine that spoke last time the chosen one failed, for /alfred status. */
+let fellBackTo: Provider | undefined
+
+async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number, provider: Provider = o.provider) {
   if (isWindows === undefined) isWindows = (await $.session.machine()).sysname === 'Windows_NT'
-  const req = speechRequest(text, o, isWindows)
+  const req = speechRequest(text, o, isWindows, provider)
   const env: Record<string, string> = {
     JARVIS_URL: req.url,
     JARVIS_BODY: req.body,
@@ -376,9 +513,11 @@ async function synthesizeAndPlay($: $, text: string, o: Opts, gen: number) {
   }
   if (exitCode !== 0) {
     const why = stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `exit ${exitCode}`
-    const hint = o.provider === 'voicestudio' && /connect|refused|unable|actively/i.test(why)
+    const hint = provider === 'voicestudio' && /connect|refused|unable|actively/i.test(why)
       ? ' (is the VoiceStudio app running?)'
-      : ''
+      : provider === 'alfred' && /connect|refused|unable|actively/i.test(why)
+        ? " (Alfred's voice service is not running yet)"
+        : ''
     throw new Error(why.slice(0, 300) + hint)
   }
 }
@@ -398,7 +537,7 @@ function speak($: $, text: string, opts: Opts): Promise<string | undefined> {
     // Kept until the line has played, so a plugin restart mid-sentence can say it again.
     await $.store.set(PLAYING_KEY, { text: line, at: Date.now() }).catch(() => undefined)
     try {
-      await synthesizeAndPlay($, line, opts, gen)
+      await speakWithFallback($, line, opts, gen)
       await $.store.set(PLAYING_KEY, null).catch(() => undefined)
       if (lastError) {
         lastError = undefined
@@ -449,6 +588,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     return undefined
   }
   stopSpeech('listening started')
+  if (o.provider !== 'voicestudio') void ensureVoiceService($, o, 0).catch(() => undefined)
   const gen = ++listenGen
   isListening = true
   $.ui.status(`🎙 ${NAME} · warming up the microphone…`)
@@ -456,7 +596,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
   const child = $.process.spawn({
     argv: [...POWERSHELL, LISTEN_ENCODED],
     env: {
-      JARVIS_URL: `${o.vsUrl.replace(/\/+$/, '')}/v1/audio/transcriptions`,
+      JARVIS_URL: `${o.provider === 'voicestudio' ? o.vsUrl.replace(/\/+$/, '') : o.localUrl}/v1/audio/transcriptions`,
       JARVIS_LANG: language,
       JARVIS_MAX_MS: '30000',
       JARVIS_SILENCE_MS: '1100',
@@ -938,13 +1078,19 @@ function looksDictated(text: string): boolean {
 }
 
 
+const voiceName = (o: Opts) => (o.provider === 'elevenlabs' ? o.elVoice : o.provider === 'voicestudio' ? o.vsVoice : o.localVoice)
+
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
 
 export const register: Register = (on, options) => {
   const opts: Opts = {
-    provider: options.provider === 'elevenlabs' ? 'elevenlabs' : 'voicestudio',
+    provider: options.provider === 'elevenlabs' ? 'elevenlabs' : options.provider === 'voicestudio' ? 'voicestudio' : 'alfred',
+    localUrl: `http://127.0.0.1:${Math.max(1024, Math.min(65535, Number(options.voice_port ?? 3911) || 3911))}`,
+    localVoice: String(options.alfred_voice || 'bm_george'),
+    speed: Math.max(0.5, Math.min(1.5, Number(options.voice_speed ?? 0.95) || 0.95)),
+    asr: String(options.listen_model || 'parakeet'),
     vsUrl: String(options.voicestudio_url || 'http://127.0.0.1:3900'),
     vsVoice: String(options.voicestudio_voice || 'default'),
     elKey: String(options.elevenlabs_api_key ?? ''),
@@ -1085,6 +1231,7 @@ export const register: Register = (on, options) => {
     }
     void refreshHud($)
     void refreshProject($)
+    if (opts.provider !== 'voicestudio' || voiceInput) void ensureVoiceService($, opts, 0).catch(() => undefined)
     if (updateCheck) {
       void (async () => {
         const today = new Date().toDateString()
@@ -1536,7 +1683,7 @@ export const register: Register = (on, options) => {
         return { text: `Speaking: ${rest.join(' ')}` }
       case 'test':
       case '': {
-        const where = `engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}`
+        const where = `engine ${opts.provider}, voice ${voiceName(opts)}`
         const err = await speak($, await phrase($, 'test', opts.title), opts)
         if (!err) void refreshHud($)
         return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
@@ -1599,7 +1746,7 @@ export const register: Register = (on, options) => {
         return { text: `By accepting, you confirm you have the rights each licence requires for your use.\n${done.join('\n')}\nNow try /listen again.` }
       }
       case 'status':
-        return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}\nSpeech last cut off: ${lastStop}` }
+        return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${voiceName(opts)} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}${fellBackTo ? ` · last line spoken by the ${fellBackTo} fallback` : ''}\nAlfred's voice service: ${(await voiceServiceUp($, opts)) ? 'running' : 'not running'} (${opts.localUrl})\nLast error: ${lastError ?? 'none'}\nSpeech last cut off: ${lastStop}` }
       default:
         return { text: `Usage: /${e.command} hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | update [check] | accept-licences` }
     }

@@ -52,7 +52,7 @@ function decode(argv: readonly string[]): string {
   return script
 }
 
-test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($, on) => {
+test('on Windows a reply is spoken in Alfred\'s own voice (George) via PowerShell', async ($, on) => {
   const runs: Run[] = []
   windowsHost(on, runs)
   on('turn.complete', (_, e) => ({ text: e.answer }))
@@ -68,12 +68,12 @@ test('on Windows a reply is spoken through VoiceStudio via PowerShell', async ($
   const script = decode(spoken?.argv ?? [])
   expect(script).toContain('System.Media.SoundPlayer')
   expect(script).toContain("$ProgressPreference = 'SilentlyContinue'")
-  expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/speech')
+  expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3911/v1/audio/speech')
   const body = JSON.parse(spoken?.env.JARVIS_BODY ?? '{}')
   expect(body.input).toBe('All tests pass, sir.')
   expect(body.response_format).toBe('pcm')
-  expect(body.voice).toBe('Jarvis')
-  expect(body.instructions).toBeUndefined()
+  expect(body.voice).toBe('bm_george')
+  expect(body.speed).toBe(0.95)
 })
 
 test('a dictated sentence pasted into an empty box is sent and acknowledged', async ($, on) => {
@@ -209,7 +209,7 @@ test('Ctrl+Space listens, then sends what was said', async ($, on) => {
 
   expect(r.text).toBe('') // the key is swallowed
   const recorder = runs.find(x => x.env.JARVIS_MAX_MS)
-  expect(recorder?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/transcriptions')
+  expect(recorder?.env.JARVIS_URL).toBe('http://127.0.0.1:3911/v1/audio/transcriptions')
   expect(recorder?.env.JARVIS_LANG).toBe('en')
   expect(decode(recorder?.argv ?? [])).toContain('waveInOpen')
   expect(submitted).toEqual(['What files are in this folder?'])
@@ -647,4 +647,41 @@ test('updates: the tool checks the marketplace, and installs only when asked to'
   const done = await $.tool.run({ tool: 'mcp__jarvis__update_self', action: 'install', tool_use_id: 'up2' } as any)
   expect(JSON.stringify(done)).toContain('Installed version 0.19.0')
   expect(ran).toEqual([['claude', 'plugin', 'marketplace', 'update', 'jarvis-claude'], ['claude', 'plugin', 'update', 'jarvis@jarvis-claude']])
+})
+
+test('voice: VoiceStudio still works when chosen', { options: { provider: 'voicestudio', voicestudio_voice: 'Jarvis' } } as any, async ($: any, on: any) => {
+  const runs: Run[] = []
+  windowsHost(on, runs)
+  on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'Very good, sir.', durationMs: 10, isAborted: false, turnId: 'vs1', reason: 'answer' })
+  await tick()
+  const spoken = runs.find(r => r.env.JARVIS_BODY?.includes('Very good'))
+  expect(spoken?.env.JARVIS_URL).toBe('http://127.0.0.1:3900/v1/audio/speech')
+  expect(JSON.parse(spoken?.env.JARVIS_BODY ?? '{}').voice).toBe('Jarvis')
+})
+
+test('voice: when the chosen engine fails, the Windows voice says the line instead', async ($: any, on: any) => {
+  const runs: Run[] = []
+  on('session.machine', () => ({ value: { sysname: 'Windows_NT', release: '10', machine: 'x86_64', packageManagers: [], runtimes: [] } }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('http.fetch', () => ({ value: { ok: false, status: 0, text: '' } }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'NOPY', stderr: '', isStdoutTruncated: false } }))
+  on('process.spawn', async function* (_: unknown, e: any) {
+    runs.push({ argv: e.argv, env: e.env ?? {} })
+    if (e.env?.JARVIS_URL) {
+      yield { stream: 'stderr' as const, text: 'Unable to connect to the remote server' }
+      return { value: { code: 1, signal: null } }
+    }
+    yield { stream: 'stdout' as const, text: '.' }
+    return { value: { code: 0, signal: null } }
+  })
+  on('turn.complete', (_: unknown, e: any) => ({ text: e.answer }))
+  await $.turn.complete({ answer: 'Quite so, sir.', durationMs: 10, isAborted: false, turnId: 'fb1', reason: 'answer' })
+  await tick(300)
+  const fallback = runs.find(r => r.env.JARVIS_TEXT === 'Quite so, sir.')
+  expect(fallback).toBeDefined()
+  expect(decode(fallback?.argv ?? [])).toContain('System.Speech')
 })
