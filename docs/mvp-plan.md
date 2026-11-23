@@ -136,8 +136,8 @@ timers included.
 - [ ] Create an Anthropic API account at platform.claude.com. Top up US$5, or claim the free
       US$5 by verifying your phone number.
 - [ ] Create the Telegram bot with @BotFather.
-- [ ] Choose the model: Haiku 5.5 (cheapest, under US$1 a month) or Sonnet 5.5 (sharper, about
-      US$2–5 a month).
+- [x] Model chosen: Sonnet 5.5 at low effort (about US$2–5 a month). The model name is a setting,
+      so it can drop to Haiku 5.5 if costs ever matter.
 - [ ] Give Alfred a Cloudflare access token through the secure credential form. Keys never go into chat.
 
 **To do (Alfred):**
@@ -278,6 +278,6 @@ the demo script and the pitch deck.
 ## Decisions still open
 
 1. The wake phrase: "Alfred" (fast, more false wakes) or "Hey Alfred" (safer). Suggested: "Hey Alfred".
-2. The model for Alfred lite: Haiku 5.5 or Sonnet 5.5.
+2. ~~The model for Alfred lite~~ **Decided: Sonnet 5.5 at low effort** (about US$2–5 a month; can be switched to Haiku 5.5 with one setting).
 3. Which calendar and email account the briefing uses: Outlook or Gmail.
 4. Whether to sync your notes to Cloudflare (needed for Alfred lite to know them).
