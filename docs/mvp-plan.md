@@ -313,7 +313,7 @@ reminders, in under 45 seconds.
 - Keeps the last 30 nightly copies. "Alfred, restore yesterday's notes" brings one back, and asks
   first, since it replaces what is there.
 - Never public. A private GitHub repository is checked to be private before anything is sent.
-- [ ] Choose: OneDrive or a private GitHub repository. [ ] Nightly copy; [ ] restore on request;
+- [x] Chosen: a private GitHub repository (create it on GitHub, set to Private). [ ] Nightly copy; [ ] restore on request;
   [ ] a line in `/alfred status` with the last backup time.
 
 **8b. Self-repair (~1 session, laptop)**
@@ -369,4 +369,4 @@ the demo script and the pitch deck.
 2. ~~The model for Alfred lite~~ **Decided: Sonnet 5.5 at low effort, consulting Opus 5.5 for complex requests.**
 3. Which calendar and email account the briefing uses: Outlook or Gmail.
 4. Whether to sync your notes to Cloudflare (needed for Alfred lite to know them).
-5. Where the nightly backup goes: OneDrive or a private GitHub repository.
+5. ~~Where the nightly backup goes~~ **Decided: a private GitHub repository.**
