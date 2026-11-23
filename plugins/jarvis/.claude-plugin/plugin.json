@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {

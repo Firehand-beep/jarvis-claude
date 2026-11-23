@@ -143,6 +143,34 @@ $w.Write([Text.Encoding]::ASCII.GetBytes('data'))
 $w.Write([int]$pcm.Length)
 $w.Write($pcm)
 $w.Flush()
+$audio = $wav.ToArray()
+
+# Enrolment: keep the recording, transcribe nothing.
+if ($env:ALFRED_SAVE) {
+  [IO.File]::WriteAllBytes($env:ALFRED_SAVE, $audio)
+  Out-Line 'SAVED'
+  exit 0
+}
+
+# Voice ID: only the enrolled voice goes on to be transcribed. Any failure refuses.
+function B64([string]$s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
+if ($env:ALFRED_VID_SCRIPT) {
+  $tmpWav = Join-Path $env:TEMP ('alfred-vid-' + [guid]::NewGuid().ToString('N') + '.wav')
+  [IO.File]::WriteAllBytes($tmpWav, $audio)
+  $ErrorActionPreference = 'Continue'
+  try {
+    if (Get-Command py -ErrorAction SilentlyContinue) { $res = & py -3 $env:ALFRED_VID_SCRIPT verify $env:ALFRED_DIR $tmpWav 2>$null }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) { $res = & python $env:ALFRED_VID_SCRIPT verify $env:ALFRED_DIR $tmpWav 2>$null }
+    else { $res = $null }
+  } finally { Remove-Item $tmpWav -ErrorAction SilentlyContinue }
+  $ErrorActionPreference = 'Stop'
+  $line = @($res) | Where-Object { "$_" -like '{*' } | Select-Object -Last 1
+  if (-not $line) { Out-Line ('VIDERR ' + (B64 'Python was not found or did not answer')); exit 0 }
+  $v = $line | ConvertFrom-Json
+  if (-not $v.ok) { Out-Line ('VIDERR ' + (B64 ([string]$v.error + ' ' + [string]$v.detail))); exit 0 }
+  if ([double]$v.score -lt [double]$env:ALFRED_VID_MIN) { Out-Line ('REJECT ' + $v.score); exit 0 }
+  Out-Line ('VOICEOK ' + $v.score)
+}
 
 $nl = [string][char]13 + [string][char]10
 $q = [string][char]34
@@ -177,6 +205,9 @@ export const LISTEN_ENCODED = encodePowerShell(LISTEN_SCRIPT)
 
 export type ListenOutcome =
   | { kind: 'text'; text: string }
+  | { kind: 'saved' }
+  | { kind: 'reject'; score: number }
+  | { kind: 'viderr'; why: string }
   | { kind: 'nospeech' }
   | { kind: 'fail'; body: string }
   | { kind: 'broken'; why: string }
@@ -193,6 +224,11 @@ export function parseListen(stdout: string, stderr: string, exitCode: number): L
       return { kind: 'text', text: raw.trim() }
     }
   }
+  if (/^SAVED/m.test(stdout)) return { kind: 'saved' }
+  const reject = /^REJECT (\S+)/m.exec(stdout)
+  if (reject) return { kind: 'reject', score: Number(reject[1]) }
+  const viderr = /^VIDERR (\S+)/m.exec(stdout)
+  if (viderr?.[1]) return { kind: 'viderr', why: decodeBase64Utf8(viderr[1]).trim() }
   const fail = /^FAIL (\S+)/m.exec(stdout)
   if (fail?.[1]) return { kind: 'fail', body: decodeBase64Utf8(fail[1]) }
   if (/^NOSPEECH/m.test(stdout)) return { kind: 'nospeech' }

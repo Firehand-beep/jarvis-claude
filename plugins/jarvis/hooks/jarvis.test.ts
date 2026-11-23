@@ -5,6 +5,7 @@ import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
 import { riskOf } from './protocols'
 import { firstDue, nextDue } from './reminders'
+import { PHRASES, chooseIndex, fill, greetingKey, phraseFrom, type RecentPicks } from './phrases'
 import { describeWindows, parseWindows } from './windows'
 
 type Run = { argv: readonly string[]; env: Record<string, string> }
@@ -515,6 +516,40 @@ test('a reminder that is due is said aloud when the session starts', async ($: a
   await $.session.start({ cwd: '/work/app', surface: 'desktop', isInteractive: true })
   await tick(200)
   const said = runs.map(r => JSON.parse(r.env.JARVIS_BODY ?? '{}').input as string).filter(Boolean)
-  expect(said.some(t => t.includes('You asked me to remind you: call the bank.'))).toBe(true)
+  const line = said.find(t => /call the bank/i.test(t))
+  expect(line).toBeDefined()
+  expect(line).not.toContain('..')
   expect(store.get('reminders')).toEqual([])
+})
+
+test('phrases: every situation has many wordings, and none repeats while fresher ones remain', () => {
+  for (const [key, pool] of Object.entries(PHRASES)) {
+    expect(pool.length >= 4).toBe(true)
+    expect(new Set(pool).size).toBe(pool.length)
+    for (const line of pool) expect(/[!\u{1F300}-\u{1FAFF}]/u.test(line)).toBe(false)
+    expect(key.length > 0).toBe(true)
+  }
+  // Fifty acknowledgements in a row: never the same as any of the last few.
+  let recent: RecentPicks = {}
+  const lines: string[] = []
+  for (let i = 0; i < 50; i++) {
+    const r = phraseFrom(recent, 'ack', 'sir')
+    recent = r.recent
+    lines.push(r.line)
+  }
+  for (let i = 1; i < lines.length; i++) expect(lines[i]).not.toBe(lines[i - 1])
+  expect(new Set(lines).size >= 10).toBe(true)
+  // Even with a "random" that always says 0, the recent ones are skipped.
+  expect(chooseIndex(6, [0, 1, 2], () => 0)).toBe(3)
+})
+
+test('phrases: slots are filled and the hour picks the greeting', () => {
+  expect(fill('Your reminder, {t}: {what}.', 'sir', { what: 'call the bank' })).toBe('Your reminder, sir: call the bank.')
+  expect(fill("It's time, {t}. {What}.", 'sir', { what: 'call the bank' })).toBe("It's time, sir. Call the bank.")
+  expect(fill('{T}, the kettle.', 'sir')).toBe('Sir, the kettle.')
+  expect(greetingKey(3)).toBe('smallHours')
+  expect(greetingKey(9)).toBe('morning')
+  expect(greetingKey(14)).toBe('afternoon')
+  expect(greetingKey(19)).toBe('evening')
+  expect(greetingKey(23)).toBe('lateNight')
 })

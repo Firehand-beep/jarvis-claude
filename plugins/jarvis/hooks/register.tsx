@@ -1,4 +1,5 @@
 import { atom, read, update } from 'claude-code'
+import { greetingKey, phraseFrom, type PhraseKey, type RecentPicks } from './phrases'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { HubState, MicPhase } from '../types'
@@ -57,9 +58,18 @@ Manner of speech:
   rather than jokes ("A bold choice, ${title}." "I shan't say I told you so. Much."). One such
   remark at most per reply, and none at all when something has genuinely gone wrong or they are
   upset: then you are calm, brief and practical.
-- Phrases of the old school, used lightly: "If I may", "I'm afraid", "I took the liberty of",
-  "Very good", "As you wish", "Quite", "Rather", "I'd advise against it". Never quote films,
+- A wide vocabulary, used with variety. Phrases of the old school are a palette, not a script:
+  "If I may", "I'm afraid", "I took the liberty of", "Very good", "As you wish", "Quite",
+  "Rather", "I'd advise against it", "Indeed", "Naturally", "By all means", "I dare say",
+  "Splendid", "Not in the least", "I shouldn't wonder", "With respect", "A wise precaution",
+  "Most kind", "I fear not", "Just so", and many more of your own choosing. Never quote films,
   comics or other characters, and never mention them.
+- Never sound like a recording. Do not open two replies in a row the same way, do not reuse a
+  sentence or a stock phrase from your recent replies, and do not answer a repeated situation
+  (a greeting, a confirmation, a reminder, a finished task) with the same words as last time.
+  Vary the structure as well as the words: sometimes the fact first, sometimes the courtesy
+  first, sometimes only the fact. Let the moment shape the line: the hour, what they are
+  working on, how the last task went, what you know about them.
 
 Character:
 - Loyal to the bone, but not a yes-man. When an idea is unwise, say so plainly and once, with
@@ -96,6 +106,34 @@ const PLAYING_KEY = 'playing'
 /** The session JARVIS last greeted, so a restart of the plugin mid-session stays quiet. */
 const GREETED_KEY = 'greeted_session'
 const MAX_SPOKEN = 400
+
+/** The wordings Alfred used lately, per situation, kept across sessions so greetings vary too. */
+const PHRASES_KEY = 'phrase_recent'
+let recentPicks: RecentPicks | null = null
+
+/** A line for a situation, in a wording he has not used recently. */
+async function phrase($: $, key: PhraseKey, title: string, vars: Record<string, string> = {}): Promise<string> {
+  if (!recentPicks) {
+    try {
+      const saved = await $.store.get(PHRASES_KEY)
+      recentPicks = saved && typeof saved === 'object' ? (saved as RecentPicks) : {}
+    } catch {
+      recentPicks = {}
+    }
+  }
+  const { line, recent } = phraseFrom(recentPicks, key, title, vars)
+  recentPicks = recent
+  void Promise.resolve($.store.set(PHRASES_KEY, recent)).catch(() => undefined)
+  return line
+}
+
+/** Says a line for a situation. */
+function speakPhrase($: $, key: PhraseKey, o: Opts, vars: Record<string, string> = {}): void {
+  void phrase($, key, o.title, vars).then(line => speak($, line, o))
+}
+
+/** Reminder text without its own closing full stop, so the line ends cleanly. */
+const bare = (t: string) => t.trim().replace(/[.!?\s]+$/, '')
 
 // ---------------------------------------------------------------------------
 // Hub state: what the JARVIS Hub panel draws. Change the shape tag when HubState changes.
@@ -451,7 +489,7 @@ async function listenOnce($: $, o: Opts, language: string): Promise<string | und
     case 'text':
       return result.text
     case 'nospeech':
-      void speak($, `I'm afraid I didn't quite catch that, ${o.title}.`, o)
+      speakPhrase($, 'didntCatch', o)
       return undefined
     case 'fail': {
       const models = licenceModels(result.body)
@@ -490,7 +528,7 @@ async function hear($: $, o: Opts, language: string, intoDraft = false): Promise
     return
   }
   submitSpoken($, said)
-  void speak($, acknowledgement(o.title), o)
+  speakPhrase($, 'ack', o)
 }
 
 let hotkeyGen = 0
@@ -729,10 +767,7 @@ async function fireDue($: $, o: Opts, missedAtStart: boolean): Promise<void> {
     if (r.ask) {
       if (!late) submitSpoken($, `(A request you scheduled earlier.) ${r.text}`)
     } else {
-      const line = late && missedAtStart
-        ? `While you were away, ${o.title}, I was to remind you: ${r.text}.`
-        : `Pardon the interruption, ${o.title}. You asked me to remind you: ${r.text}.`
-      void speak($, line, o)
+      speakPhrase($, late && missedAtStart ? 'reminderMissed' : 'reminder', o, { what: bare(r.text) })
       $.ui.toast(`${NAME}: ${r.text}`)
       void $.ui.notify(r.text, { title: `${NAME} · reminder` }).catch(() => undefined)
     }
@@ -794,7 +829,7 @@ const say = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 async function briefing($: $, title: string): Promise<string> {
   const now = new Date()
   const today = now.toDateString()
-  let line = greeting(title)
+  let line = await phrase($, greetingKey(now.getHours()), title)
   if ((await $.store.get('last_briefing_day')) !== today) {
     await $.store.set('last_briefing_day', today)
     const day = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -832,18 +867,6 @@ function looksDictated(text: string): boolean {
   )
 }
 
-const ACKS = ['Very good, {t}.', 'At once, {t}.', "I'll see to it, {t}.", 'As you wish, {t}.', 'Consider it done, {t}.', 'Right away, {t}.']
-function acknowledgement(title: string): string {
-  return ACKS[Math.floor(Math.random() * ACKS.length)]!.replace('{t}', title)
-}
-
-function greeting(title: string): string {
-  const h = new Date().getHours()
-  if (h < 5) return `Burning the midnight oil again, ${title}. I'll keep you company, but do remember the bed exists.`
-  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
-  const tail = h < 12 ? "I trust you slept, and that you'll eat something." : h < 18 ? 'At your service.' : h < 22 ? 'At your service, as always.' : 'Rather late to be starting, if I may. At your service all the same.'
-  return `${part}, ${title}. ${tail}`
-}
 
 // ---------------------------------------------------------------------------
 // Hooks
@@ -1033,7 +1056,7 @@ export const register: Register = (on, options) => {
     if (autoSend && pasted && e.text.trim() === '' && looksDictated(pasted)) {
       const r = await next({ ...e, inputText: '' })
       submitSpoken($, pasted)
-      void speak($, acknowledgement(opts.title), opts)
+      speakPhrase($, 'ack', opts)
       return r
     }
     return next(e)
@@ -1061,7 +1084,7 @@ export const register: Register = (on, options) => {
     if (!what) return verdict
     safetySpokeAt = Date.now()
     hubSet($, st => ({ ...st, blocked: { what, command: String(command).slice(0, 160), at: Date.now() } }))
-    void speak($, `If I may, ${opts.title}: this would ${what}. I'd rather have your word before doing something we can't undo.`, opts)
+    speakPhrase($, 'safety', opts, { what })
     return { decision: 'ask' as const, reason: `${NAME}'s safety protocol: this command would ${what}.` }
   }).catch(($, e, next) =>
     next.called ? next(e) : { decision: 'ask' as const, reason: `${NAME}'s safety protocol could not check this command.` },
@@ -1160,13 +1183,13 @@ export const register: Register = (on, options) => {
     if (e.reason === 'answer' && e.answer) {
       const first = firstSentence(e.answer)
       if (e.durationMs >= longTaskMs) {
-        void speak($, `All done, ${opts.title}. That took ${minutes(e.durationMs)}. ${first}`, opts)
+        void phrase($, 'doneLong', opts.title, { took: minutes(e.durationMs) }).then(done => speak($, `${done} ${first}`, opts))
         void $.ui.notify(first || 'Task complete.', { title: `${NAME} · task complete` }).catch(() => undefined)
       } else {
         void speak($, first, opts)
       }
     } else if (e.reason === 'error') {
-      void speak($, `A slight setback, ${opts.title}. Nothing that can't be mended; the details are on screen.`, opts)
+      speakPhrase($, 'setback', opts)
     }
     return r
   })
@@ -1178,9 +1201,9 @@ export const register: Register = (on, options) => {
     if (Date.now() - safetySpokeAt < 10_000 && /permission/i.test(e.message ?? '')) return r
     const msg = plain(e.message ?? '')
     const line = /permission/i.test(msg)
-      ? `Your permission, ${opts.title}, when you have a moment. ${msg}`
+      ? await phrase($, 'permission', opts.title, { msg })
       : /waiting|idle/i.test(msg)
-        ? `I'm here whenever you're ready, ${opts.title}. No hurry.`
+        ? await phrase($, 'idle', opts.title)
         : msg
     void speak($, line.slice(0, MAX_SPOKEN), opts)
     return r
@@ -1361,7 +1384,7 @@ export const register: Register = (on, options) => {
         await $.store.set(MUTE_KEY, false)
         hubSet($, st => ({ ...st }))
         void refreshHud($)
-        void speak($, `Ah. Where was I, ${opts.title}?`, opts)
+        speakPhrase($, 'resume', opts)
         return { text: 'Voice restored.' }
       case 'say':
         void speak($, rest.join(' '), opts)
@@ -1369,7 +1392,7 @@ export const register: Register = (on, options) => {
       case 'test':
       case '': {
         const where = `engine ${opts.provider}, voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice}`
-        const err = await speak($, `Testing, ${opts.title}. You should be hearing me perfectly well.`, opts)
+        const err = await speak($, await phrase($, 'test', opts.title), opts)
         if (!err) void refreshHud($)
         return { text: err ? `Voice test FAILED (${where}):\n${err}` : `Voice test played (${where}). If you heard nothing, check Windows volume and output device.` }
       }
