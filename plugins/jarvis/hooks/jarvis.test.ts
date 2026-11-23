@@ -5,6 +5,7 @@ import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
 import { riskOf } from './protocols'
 import { firstDue, nextDue } from './reminders'
+import { COUNSEL_TYPE, counselModel, isOpus } from './routing'
 import { PHRASES, chooseIndex, fill, greetingKey, phraseFrom, type RecentPicks } from './phrases'
 import { describeWindows, parseWindows } from './windows'
 
@@ -117,7 +118,10 @@ test('the persona is added to the system prompt', async ($, on) => {
   const r = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] })
   const persona = r.sections.find((x: { id: string }) => x.id === 'jarvis:persona')
   expect(persona?.text).toContain('"sir"')
-  expect(r.sections.map((x: { id: string }) => x.id)).toEqual(expect.arrayContaining(['jarvis:persona', 'jarvis:knowledge', 'jarvis:memory']))
+  expect(r.sections.map((x: { id: string }) => x.id)).toEqual(expect.arrayContaining(['jarvis:persona', 'jarvis:knowledge', 'jarvis:memory', 'jarvis:routing']))
+  const routing = r.sections.find((x: { id: string }) => x.id === 'jarvis:routing')
+  expect(routing?.text).toContain(COUNSEL_TYPE)
+  expect(routing?.text).toContain('(opus)')
 })
 
 
@@ -552,4 +556,35 @@ test('phrases: slots are filled and the hour picks the greeting', () => {
   expect(greetingKey(14)).toBe('afternoon')
   expect(greetingKey(19)).toBe('evening')
   expect(greetingKey(23)).toBe('lateNight')
+})
+
+test('model routing: the counsel is registered on Opus, at high effort', async ($: any, on: any) => {
+  const runs: Run[] = []
+  const agents: any[] = []
+  windowsHost(on, runs)
+  on('agent.register', (_: unknown, spec: any) => (agents.push(spec), { value: { type: `jarvis:${spec.name}` } }))
+  on('store.set', () => ({ value: undefined }))
+  on('theme.set', () => ({ value: { isDrawn: false, reason: 'terminal' } }))
+  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, percent: 1 }, rateLimits: [] } }))
+  on('vcs.detect', () => null)
+  on('env.get', () => ({ value: undefined }))
+  on('session.start', (_: unknown, e: any) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/work/app', surface: 'terminal', isInteractive: true } as any)
+  await tick(100)
+  const counsel = agents.find(a => a.name === 'counsel')
+  expect(counsel?.model).toBe('opus')
+  expect(counsel?.effort).toBe('high')
+  expect(counsel?.description).toContain('cannot see')
+  expect(counsel?.prompt).toContain('report back')
+})
+
+test('model routing: which models count as the strong one, and the setting', () => {
+  expect(isOpus('claude-opus-5-5')).toBe(true)
+  expect(isOpus('opus')).toBe(true)
+  expect(isOpus('claude-sonnet-5-5')).toBe(false)
+  expect(isOpus(undefined)).toBe(false)
+  expect(counselModel('')).toBe('opus')
+  expect(counselModel(' claude-opus-5-5 ')).toBe('claude-opus-5-5')
 })

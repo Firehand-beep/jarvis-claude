@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {
@@ -109,6 +109,18 @@
       "title": "How JARVIS addresses you",
       "default": "sir",
       "description": "What JARVIS calls you: sir, ma'am, Master and your first name, your name, boss..."
+    },
+    "smart_routing": {
+      "type": "boolean",
+      "title": "Choose the model for the task",
+      "description": "Alfred works on the session's everyday model (set it to Sonnet with /model sonnet) and hands complex tasks to his counsel on a stronger model. Off: everything stays on the session's model.",
+      "default": true
+    },
+    "counsel_model": {
+      "type": "string",
+      "title": "Model for complex tasks",
+      "description": "The model Alfred's counsel uses for complex work: opus (default), or any model alias or id.",
+      "default": "opus"
     }
   },
   "license": "MIT",

@@ -1,5 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import { greetingKey, phraseFrom, type PhraseKey, type RecentPicks } from './phrases'
+import { COUNSEL_TYPE, counselModel, counselSpec, isOpus, routingSection } from './routing'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { HubState, MicPhase } from '../types'
@@ -895,6 +896,9 @@ export const register: Register = (on, options) => {
   const safety = options.safety_protocol !== false
   const useLook = options.theme !== false
   const longTaskMs = Math.max(10, Number(options.long_task_seconds ?? 60)) * 1000
+  // Choosing the model: Alfred on the everyday model, complex work to his counsel on the strong one.
+  const routing = options.smart_routing !== false
+  const strongModel = counselModel(options.counsel_model)
   const Title = opts.title.charAt(0).toUpperCase() + opts.title.slice(1)
   let safetySpokeAt = 0
 
@@ -982,6 +986,7 @@ export const register: Register = (on, options) => {
         isDeferred: false,
       }))
     }
+    if (routing) regs.push($.agent.register(counselSpec(NAME, opts.title, strongModel)))
     if (voiceInput) {
       regs.push($.command.register({ name: 'listen', description: `${NAME}: speak your next prompt (or press Ctrl+Space)` }))
     }
@@ -990,6 +995,15 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     // The Hub first, so it is up at once; everything else follows without holding it up.
     if (showHub) void $.ui.open({ id: HUB, title: NAME }).catch(() => undefined)
+    if (routing) {
+      void (async () => {
+        const model = await $.session.model()
+        if (isOpus(model) && !(await $.store.get('routing_hint_shown'))) {
+          await $.store.set('routing_hint_shown', true)
+          $.ui.toast(`${NAME} decides when to call on Opus. For everyday work, set the session to Sonnet once: /model sonnet`)
+        }
+      })().catch(() => undefined)
+    }
     void refreshHud($)
     void refreshProject($)
     if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
@@ -1020,6 +1034,15 @@ export const register: Register = (on, options) => {
     return result
   })
 
+  // The counsel at work: shown on the Hub, so it is plain which mind is on the task.
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    if (e.subagentType === COUNSEL_TYPE && !r.deny) {
+      hubLog($, 'jarvis', `Consulting my counsel (${r.model}): ${e.description}`)
+    }
+    return r
+  }).catch(($, e, next) => next(e))
+
   // Persona, appended to the system prompt.
   on('prompt.compose', async ($, e, next) => {
     const r = await next(e)
@@ -1029,6 +1052,7 @@ export const register: Register = (on, options) => {
         ...r.sections,
         { id: 'jarvis:persona', text: persona(opts.title, NAME), scope: 'session' as const },
         { id: 'jarvis:knowledge', text: knowledgeSection(NAME, opts.title, homeCity), scope: 'session' as const },
+        ...(routing ? [{ id: 'jarvis:routing', text: routingSection(NAME, opts.title, strongModel), scope: 'session' as const }] : []),
         ...(useMemory
           ? [{ id: 'jarvis:memory', text: memorySection(NAME, opts.title, memFolderShown ?? '~/Alfred', memNotes, memRecent), scope: 'session' as const }]
           : []),
