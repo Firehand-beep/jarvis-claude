@@ -28,7 +28,7 @@ import type { Hotkey } from './hotkey'
 import { failMessage, LISTEN_ENCODED, licenceModels, parseListen } from './listen'
 import { LOOK } from './look'
 import { encodePowerShell, POWERSHELL } from './powershell'
-import { riskOf, SHELL_TOOLS } from './protocols'
+import { riskOf, SHELL_TOOLS, WEB_TOOLS, webIsSafe } from './protocols'
 import { panelSvg } from './panel'
 import type { PanelState, PanelView } from './panel'
 import { MOOD_COLOR } from './reactor'
@@ -898,6 +898,8 @@ export const register: Register = (on, options) => {
   const longTaskMs = Math.max(10, Number(options.long_task_seconds ?? 60)) * 1000
   // Choosing the model: Alfred on the everyday model, complex work to his counsel on the strong one.
   const routing = options.smart_routing !== false
+  // Searching and reading public pages without asking each time.
+  const webFree = options.web_without_asking !== false
   const strongModel = counselModel(options.counsel_model)
   const Title = opts.title.charAt(0).toUpperCase() + opts.title.slice(1)
   let safetySpokeAt = 0
@@ -1092,6 +1094,8 @@ export const register: Register = (on, options) => {
     if (SAFE_TOOLS.has(e.tool)) return { decision: 'allow' as const }
     const verdict = await next(e)
     if (verdict.decision === 'deny') return verdict
+    // Web: a search, or reading a public page, is part of what was asked; no permission each time.
+    if (webFree && WEB_TOOLS.has(e.tool)) return webIsSafe(e.tool, e.input) ? { decision: 'allow' as const } : verdict
     if (useMemory && memFolder) {
       const input = (e.input ?? {}) as Record<string, unknown>
       const filePath = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''

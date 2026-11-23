@@ -39,3 +39,49 @@ export function riskOf(command: string): string | undefined {
 
 /** The shell tools whose `command` the protocol reads. */
 export const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+
+// ---------------------------------------------------------------------------
+// Web access: searching and reading public pages needs no permission each time.
+
+/** The tools that search the web or read a page. */
+export const WEB_TOOLS = new Set(['WebSearch', 'WebFetch'])
+
+/** Hosts on this computer or the home network: Alfred's own services live there, so reading them still asks. */
+function isPrivateHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '')
+  return (
+    h === 'localhost' ||
+    h.endsWith('.localhost') ||
+    h.endsWith('.local') ||
+    h.endsWith('.internal') ||
+    h === '::1' ||
+    /^127\./.test(h) ||
+    /^10\./.test(h) ||
+    /^192\.168\./.test(h) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+    /^169\.254\./.test(h) ||
+    /^0\./.test(h) ||
+    !h.includes('.')
+  )
+}
+
+/**
+ * Whether a web call can go ahead without asking: every search, and reading any public page by an
+ * ordinary address. Still asked: pages on this computer or the home network, and very long
+ * addresses (a page could try to smuggle private details out in one).
+ */
+export function webIsSafe(tool: string, input: unknown): boolean {
+  if (tool === 'WebSearch') return true
+  if (tool !== 'WebFetch') return false
+  const raw = (input as { url?: unknown } | null)?.url
+  if (typeof raw !== 'string' || raw.length > 400) return false
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+  if (url.username || url.password) return false
+  return !isPrivateHost(url.hostname)
+}

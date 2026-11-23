@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {
@@ -121,6 +121,12 @@
       "title": "Model for complex tasks",
       "description": "The model Alfred's counsel uses for complex work: opus (default), or any model alias or id.",
       "default": "opus"
+    },
+    "web_without_asking": {
+      "type": "boolean",
+      "title": "Web without asking",
+      "description": "Search the web and read public pages without a permission prompt each time. Pages on this computer or your home network, and unusually long addresses, still ask. A rule you set to deny web access still wins.",
+      "default": true
     }
   },
   "license": "MIT",

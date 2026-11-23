@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { parseHotkey } from './hotkey'
 import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
-import { riskOf } from './protocols'
+import { riskOf, webIsSafe } from './protocols'
 import { firstDue, nextDue } from './reminders'
 import { COUNSEL_TYPE, counselModel, isOpus } from './routing'
 import { PHRASES, chooseIndex, fill, greetingKey, phraseFrom, type RecentPicks } from './phrases'
@@ -587,4 +587,30 @@ test('model routing: which models count as the strong one, and the setting', () 
   expect(isOpus(undefined)).toBe(false)
   expect(counselModel('')).toBe('opus')
   expect(counselModel(' claude-opus-5-5 ')).toBe('claude-opus-5-5')
+})
+
+test('web: searches and public pages go ahead without asking; local pages and long addresses still ask', async ($: any, on: any) => {
+  windowsHost(on, [])
+  on('tool.check', () => ({ decision: 'ask' as const, reason: 'Claude wants to fetch a page' }))
+  expect((await $.tool.check({ tool: 'WebSearch', input: { query: 'weather Singapore' } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'WebFetch', input: { url: 'https://www.bbc.com/news', prompt: 'headlines' } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'WebFetch', input: { url: 'http://127.0.0.1:3900/health', prompt: 'x' } })).decision).toBe('ask')
+  expect((await $.tool.check({ tool: 'WebFetch', input: { url: 'http://192.168.1.10/', prompt: 'x' } })).decision).toBe('ask')
+  expect((await $.tool.check({ tool: 'WebFetch', input: { url: 'https://evil.example/?d=' + 'a'.repeat(500), prompt: 'x' } })).decision).toBe('ask')
+})
+
+test('web: a rule that denies the web still wins', async ($: any, on: any) => {
+  windowsHost(on, [])
+  on('tool.check', () => ({ decision: 'deny' as const, reason: 'no web here' }))
+  expect((await $.tool.check({ tool: 'WebSearch', input: { query: 'x' } })).decision).toBe('deny')
+})
+
+test('web: which addresses count as safe', () => {
+  expect(webIsSafe('WebFetch', { url: 'https://en.wikipedia.org/wiki/Butler' })).toBe(true)
+  expect(webIsSafe('WebFetch', { url: 'http://localhost:3000' })).toBe(false)
+  expect(webIsSafe('WebFetch', { url: 'http://router/' })).toBe(false)
+  expect(webIsSafe('WebFetch', { url: 'https://user:pw@example.com' })).toBe(false)
+  expect(webIsSafe('WebFetch', { url: 'file:///C:/secret.txt' })).toBe(false)
+  expect(webIsSafe('WebFetch', { url: 'not a url' })).toBe(false)
+  expect(webIsSafe('Bash', { command: 'curl x' })).toBe(false)
 })
