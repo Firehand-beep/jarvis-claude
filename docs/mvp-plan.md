@@ -57,12 +57,13 @@ person 0.60. The recorder changes are in `listen.ts`, still uncommitted.
 
 ---
 
-## Phase 3: Wake word, "Alfred…" (~1–1.5 sessions)
+## Phase 3: Wake word, "Hello Alfred" (~1–1.5 sessions)
 
 Hands-free listening.
 
 - A small background listener runs on the laptop: the sherpa-onnx keyword spotter. It is open
-  vocabulary, so "Alfred" or "Hey Alfred" works without training a model. openWakeWord is the
+  vocabulary, so the chosen phrase, **"Hello Alfred"**, works without training a model. The phrase is
+  a setting and can be changed later. openWakeWord is the
   fallback if accuracy is poor.
 - On hearing the word: a soft chime, the Hub turns to "listening", and the normal recorder takes the
   command (with voice ID, when enabled). The listener pauses while Alfred is speaking, so he does not
@@ -246,7 +247,7 @@ reminders, in under 45 seconds.
 - **Demo mode:** a clean Hub, no personal notes on screen, and canned fallbacks if Wi-Fi fails
   (a recorded backup video).
 - **The three-minute script:**
-  1. From across the room: "Alfred, good morning." (wake word plus briefing)
+  1. From across the room: "Hello Alfred… good morning." (wake word plus briefing)
   2. A friend gives a command and is declined; you repeat it and it is done. (voice ID)
   3. "Alfred, what's this error?" (screen awareness)
   4. From the phone: send a voice note, "Lock my laptop." It locks, and the voice reply arrives. (phone link)
@@ -277,7 +278,7 @@ the demo script and the pitch deck.
 
 ## Decisions still open
 
-1. The wake phrase: "Alfred" (fast, more false wakes) or "Hey Alfred" (safer). Suggested: "Hey Alfred".
+1. ~~The wake phrase~~ **Decided: "Hello Alfred".**
 2. ~~The model for Alfred lite~~ **Decided: Sonnet 5.5 at low effort** (about US$2–5 a month; can be switched to Haiku 5.5 with one setting).
 3. Which calendar and email account the briefing uses: Outlook or Gmail.
 4. Whether to sync your notes to Cloudflare (needed for Alfred lite to know them).
