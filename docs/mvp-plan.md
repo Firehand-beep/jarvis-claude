@@ -256,6 +256,53 @@ reminders, in under 45 seconds.
 
 ---
 
+## Phase 7: Extras that impress (~5 sessions)
+
+**7a. "Welcome back" (~0.5 session, laptop)**
+- When you unlock the laptop after being away (20 minutes or more, configurable), Alfred greets you
+  with what happened meanwhile: reminders that came due, upcoming birthdays (4d), jobs queued from the
+  phone (4b), and the battery if it is low.
+- Short and varied (the phrase pools), and silent if nothing happened, or with Do Not Disturb on.
+- [ ] Detect Windows unlock and idle time; [ ] build the "while you were away" summary; [ ] tests.
+
+**7b. Live interpreter (~1 session, laptop)**
+- "Hello Alfred, interpret Mandarin" (or Malay, Tamil and others). Alfred listens to the other
+  person, says it in English, then puts your reply into their language aloud. "That will do,
+  Alfred" ends it.
+- Speech recognition in their language, and translation by Claude.
+- [ ] Check which languages VoiceStudio can speak well; ElevenLabs is the fallback for the rest.
+- [ ] Turn-taking: who is speaking, then translate. [ ] A Hub view showing both languages as text.
+
+**7c. Pick up where you left off (~0.5 session, after 4b)**
+- Phone and laptop conversations share one journal. "Where were we?" at the laptop continues what
+  you started by voice note on the bus, and vice versa.
+- [ ] Sync the day's journal between Alfred lite and the laptop; [ ] the "where were we" summary.
+
+**7d. Receipts and spending (~1 session, after 4b)**
+- Snap a receipt to Alfred on Telegram. He reads it and logs the shop, date, amount and category.
+- Ask: "How much on food this month?", "Biggest expenses this week?" Monthly summary on request.
+- Kept as a simple spreadsheet (CSV) in `%USERPROFILE%\Alfred\spending\`, synced from Alfred lite.
+- [ ] Receipt reading (Claude vision); [ ] the spending log and questions; [ ] categories you can
+  change.
+
+**7e. Evening wrap-up (~0.5 session)**
+- At a time you choose (e.g. 10 p.m.), spoken on the laptop or sent to the phone: what got done
+  today (from the journal), what is still open (unanswered messages, reminders), tomorrow's first
+  commitment, and a word about bed if it is late.
+- [ ] A scheduled request (reminders already support this); [ ] the summary; [ ] the time setting.
+
+**7f. Meeting notes (~1.5 sessions, laptop)**
+- "Hello Alfred, take notes." He records the meeting audio (your microphone and, optionally, the
+  laptop's sound for online calls), transcribes it locally, then gives a summary, decisions and
+  action items. Action items become reminders if you say so.
+- **Consent first:** everyone in the meeting must agree to being recorded. Alfred says so when
+  starting, and a recording indicator shows on the Hub the whole time.
+- Recordings are deleted once transcribed, unless you ask to keep them.
+- [ ] Recording both sources on Windows; [ ] long-audio transcription in chunks; [ ] the summary
+  and action items; [ ] the consent reminder and indicator.
+
+---
+
 ## Order and estimate
 
 | # | Phase | Sessions | Needs the laptop for |
@@ -270,7 +317,8 @@ reminders, in under 45 seconds.
 | 4d | People book | 1.5 | importing contacts |
 | 5 | Briefing | 1 | connecting calendar and email |
 | 6 | Pitch polish | 1 | rehearsal |
-| | **Total** | **~12 sessions** | roughly 3 weeks at a relaxed pace |
+| 7 | Extras: welcome back, interpreter, continuity, receipts, wrap-up, meeting notes | ~5 | 7a, 7b, 7f |
+| | **Total** | **~17 sessions** | roughly 4–5 weeks at a relaxed pace |
 
 **Can be done without the laptop:** Alfred lite (4b) and WhatsApp links (4c A) can be built and
 deployed in full; code and tests for Phases 1–4 can be written (published, but marked untested);
