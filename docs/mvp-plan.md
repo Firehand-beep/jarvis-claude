@@ -304,6 +304,36 @@ reminders, in under 45 seconds.
 
 ---
 
+## Phase 8: Looking after himself (~2.5 sessions)
+
+**8a. Memory backup (~0.5 session; do this before the people book, 4d)**
+- Every night, a copy of Alfred's notes, journal, people book, reminders and spending log goes to a
+  private place you choose: your OneDrive folder (simplest, already on the laptop), or a private
+  GitHub repository.
+- Keeps the last 30 nightly copies. "Alfred, restore yesterday's notes" brings one back, and asks
+  first, since it replaces what is there.
+- Never public. A private GitHub repository is checked to be private before anything is sent.
+- [ ] Choose: OneDrive or a private GitHub repository. [ ] Nightly copy; [ ] restore on request;
+  [ ] a line in `/alfred status` with the last backup time.
+
+**8b. Self-repair (~1 session, laptop)**
+- If VoiceStudio is not running, or has stopped answering, Alfred starts it himself and carries on,
+  instead of going silent. If it still fails, he falls back to ElevenLabs (when configured) for that
+  line, then tells you what happened.
+- The same for his own pieces: the talk-key listener and the wake word are restarted if they stop.
+- A short "health" view on the Hub: voice, microphone, wake word, phone link, last backup.
+- [ ] Find how VoiceStudio is started on your PC; [ ] health checks and restarts; [ ] fallbacks.
+
+**8c. Learning routines (~1 session)**
+- "Alfred, learn this: every Friday at 6, sum up my week and send it to my phone." He writes it down
+  as a routine (a Claude Code skill in your user folder), repeats back what he understood, and
+  schedules it if it has a time.
+- "Alfred, show my routines", "change the Friday one", "forget the Friday one" (asks first).
+- Routines can use everything he can already do; anything risky in them still asks as usual.
+- [ ] The learn, list, change and forget tools; [ ] scheduling through reminders; [ ] tests.
+
+---
+
 ## Order and estimate
 
 | # | Phase | Sessions | Needs the laptop for |
@@ -319,11 +349,19 @@ reminders, in under 45 seconds.
 | 5 | Briefing | 1 | connecting calendar and email |
 | 6 | Pitch polish | 1 | rehearsal |
 | 7 | Extras: welcome back, interpreter, continuity, receipts, wrap-up, meeting notes | ~5 | 7a, 7b, 7f |
-| | **Total** | **~17 sessions** | roughly 4–5 weeks at a relaxed pace |
+| 8 | Backup, self-repair, learning routines | ~2.5 | 8b |
+| | **Total** | **~19–20 sessions** | roughly 5 weeks at a relaxed pace |
 
 **Can be done without the laptop:** Alfred lite (4b) and WhatsApp links (4c A) can be built and
 deployed in full; code and tests for Phases 1–4 can be written (published, but marked untested);
 the demo script and the pitch deck.
+
+## Already built since this plan was written
+
+- v0.16.0: a wider vocabulary; no repeated lines for the same situation.
+- v0.17.0: chooses the model: Sonnet for everyday work, his counsel on Opus for complex work.
+- v0.18.0: web searches and public pages without a permission prompt each time.
+- v0.19.0: updates himself, when you agree.
 
 ## Decisions still open
 
@@ -331,3 +369,4 @@ the demo script and the pitch deck.
 2. ~~The model for Alfred lite~~ **Decided: Sonnet 5.5 at low effort, consulting Opus 5.5 for complex requests.**
 3. Which calendar and email account the briefing uses: Outlook or Gmail.
 4. Whether to sync your notes to Cloudflare (needed for Alfred lite to know them).
+5. Where the nightly backup goes: OneDrive or a private GitHub repository.
