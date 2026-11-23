@@ -182,6 +182,54 @@ terms and can get the number banned. Only reconsider with a spare number.
 
 ---
 
+## Phase 4d: People book, looking after your relationships (~1.5 sessions)
+
+Alfred keeps track of the people in your life and helps you stay a good friend, son and colleague.
+
+**What he keeps, for each person (one file per person in `%USERPROFILE%\Alfred\people\`):**
+- Name, nicknames, how you know them (family, friend, work), phone number (shared with Phase 4c).
+- Birthday, anniversary and other important dates.
+- Their partner's and children's names, likes and dislikes, food and allergies, hobbies.
+- Gift ideas, and gifts already given (so nothing is repeated).
+- What is going on in their life ("starting a new job in March", "mum in hospital").
+- When you last spoke or met.
+
+**How you fill it:**
+- Just tell him: "Alfred, Jason's birthday is 14 March, and he's mad about cycling." He files it.
+- After meeting someone: "Had lunch with Sarah, she's moving to Melbourne." He updates her page and
+  the last-contact date.
+- Optional import: your phone contacts (a vCard export) or Google Contacts, to start with names,
+  numbers and birthdays.
+
+**What he does with it:**
+- **Birthday care:** a heads-up seven days before ("Jason's birthday is next Friday; shall I suggest
+  a gift?"), and on the morning itself, with a drafted message ready to send by WhatsApp (4c).
+- **Gift ideas:** suggestions drawn from what he knows they like, within a budget you give.
+- **Keeping in touch:** a gentle nudge when someone close hasn't been contacted for a while ("It's
+  been five weeks since you spoke to your grandmother, sir"). You set how often for each person, or
+  turn it off.
+- **Before you meet someone:** "Alfred, I'm seeing Sarah tonight." He reminds you what's new with
+  her and what to ask about.
+- **In the morning briefing:** today's birthdays and anyone worth a call.
+
+**Rules:**
+- Kept on the laptop, like the rest of his memory. Nothing is deleted unless you ask
+  (`/alfred forget`).
+- Only birthdays and names sync to Alfred lite (so reminders work with the laptop off), and only if
+  you allow it.
+- He never contacts anyone by himself; every message waits for your "yes".
+- Other people's details are kept discreetly: never shown in demo mode, and never sent anywhere
+  except Claude, to answer your own requests.
+
+**To do:**
+- [ ] Alfred: build the people book (tools to add, update, look up and list upcoming dates), the
+      birthday and keep-in-touch reminders, and the drafted messages.
+- [ ] You: export your phone contacts (optional) and tell Alfred about the people who matter most.
+- [ ] Decide: how far ahead birthday warnings come (suggested: 7 days and on the day), and the
+      default keep-in-touch interval for close family and friends (suggested: monthly).
+
+---
+
 ## Phase 5: Spoken morning briefing (~1 session; optional for the pitch)
 
 "Good morning, Alfred" gets you the weather, today's meetings, important unread email and today's
@@ -218,9 +266,10 @@ reminders, in under 45 seconds.
 | 4 | Phone (Telegram plus Remote Control) | 2 | a voice-note test, laptop job collection |
 | 4b | Alfred lite (cloud) | 1.5 | only the laptop half |
 | 4c | WhatsApp sending | 1 | WhatsApp Desktop test |
+| 4d | People book | 1.5 | importing contacts |
 | 5 | Briefing | 1 | connecting calendar and email |
 | 6 | Pitch polish | 1 | rehearsal |
-| | **Total** | **~10–11 sessions** | roughly 3 weeks at a relaxed pace |
+| | **Total** | **~12 sessions** | roughly 3 weeks at a relaxed pace |
 
 **Can be done without the laptop:** Alfred lite (4b) and WhatsApp links (4c A) can be built and
 deployed in full; code and tests for Phases 1–4 can be written (published, but marked untested);
