@@ -5,6 +5,7 @@ import { licenceModels, parseListen } from './listen'
 import { isTalkKey } from './register'
 import { riskOf, webIsSafe } from './protocols'
 import { firstDue, nextDue } from './reminders'
+import { compareVersions, versionOf, whatsNew, windowsUpdateScript } from './updates'
 import { COUNSEL_TYPE, counselModel, isOpus } from './routing'
 import { PHRASES, chooseIndex, fill, greetingKey, phraseFrom, type RecentPicks } from './phrases'
 import { describeWindows, parseWindows } from './windows'
@@ -613,4 +614,37 @@ test('web: which addresses count as safe', () => {
   expect(webIsSafe('WebFetch', { url: 'file:///C:/secret.txt' })).toBe(false)
   expect(webIsSafe('WebFetch', { url: 'not a url' })).toBe(false)
   expect(webIsSafe('Bash', { command: 'curl x' })).toBe(false)
+})
+
+test('updates: versions compare, and the changelog says what is new since the installed one', () => {
+  expect(compareVersions('0.19.0', '0.18.0') > 0).toBe(true)
+  expect(compareVersions('0.10.0', '0.9.9') > 0).toBe(true)
+  expect(compareVersions('1.0', '1.0.0')).toBe(0)
+  expect(compareVersions('0.18.0', '0.19.0') < 0).toBe(true)
+  expect(versionOf('{"name":"jarvis","version":"0.19.0"}')).toBe('0.19.0')
+  expect(versionOf('not json')).toBeUndefined()
+  const log = '# Changelog\n\n## 0.19.0\n- Updates himself\n\n## 0.18.0\n- Web without asking\n\n## 0.17.0\n- Chooses the model\n'
+  expect(whatsNew(log, '0.17.0')).toEqual(['Updates himself', 'Web without asking'])
+  expect(whatsNew(log, '0.19.0')).toEqual([])
+  expect(windowsUpdateScript()).toContain('& claude plugin marketplace update jarvis-claude')
+  expect(windowsUpdateScript()).toContain('& claude plugin update jarvis@jarvis-claude')
+})
+
+test('updates: the tool checks the marketplace, and installs only when asked to', async ($: any, on: any) => {
+  const ran: string[][] = []
+  on('fs.read', () => ({ value: '{"version":"0.18.0"}' }))
+  on('http.fetch', (_: unknown, req: any) => {
+    const url = String(req?.url ?? req)
+    if (url.endsWith('plugin.json')) return { value: { ok: true, status: 200, text: '{"version":"0.19.0"}' } }
+    return { value: { ok: true, status: 200, text: '## 0.19.0\n- Updates himself\n' } }
+  })
+  on('session.machine', () => ({ value: { sysname: 'Linux', release: '6', machine: 'x86_64', packageManagers: [], runtimes: [] } }))
+  on('process.run', (_: unknown, input: any) => (ran.push([...input.argv]), { value: { exitCode: 0, stdout: 'ok', stderr: '', isStdoutTruncated: false } }))
+  const check = await $.tool.run({ tool: 'mcp__jarvis__update_self', action: 'check', tool_use_id: 'up1' } as any)
+  expect(JSON.stringify(check)).toContain('0.19.0 is available')
+  expect(JSON.stringify(check)).toContain('Updates himself')
+  expect(ran).toEqual([])
+  const done = await $.tool.run({ tool: 'mcp__jarvis__update_self', action: 'install', tool_use_id: 'up2' } as any)
+  expect(JSON.stringify(done)).toContain('Installed version 0.19.0')
+  expect(ran).toEqual([['claude', 'plugin', 'marketplace', 'update', 'jarvis-claude'], ['claude', 'plugin', 'update', 'jarvis@jarvis-claude']])
 })

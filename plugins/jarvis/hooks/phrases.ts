@@ -137,6 +137,18 @@ export const PHRASES = {
     'Voice check, {t}. All in working order.',
     'Can you hear me, {t}? I can hear myself, which is a start.',
   ],
+  updateReady: [
+    'If I may, {t}: a newer version of me is ready, {version}.{news} Shall I install it?',
+    'A small improvement awaits, {t}: version {version}.{news} Say the word and I shall install it.',
+    "{T}, version {version} of myself has arrived.{news} Shall I see to it?",
+    'There is an update for me, {t}, version {version}.{news} Would you like it installed?',
+  ],
+  updated: [
+    "Installed, {t}. I'll be the better for it from your next session.",
+    'The update is in, {t}. It takes effect when you next start a session.',
+    "Done, {t}. A fresh coat of polish, ready from the next session.",
+    'All installed, {t}. Start a new session and you will have the new me.',
+  ],
 } satisfies Record<string, readonly string[]>
 
 export type PhraseKey = keyof typeof PHRASES

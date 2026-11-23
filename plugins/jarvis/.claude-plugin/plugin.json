@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Alfred for Claude Code: an old-school English family butler who speaks (local VoiceStudio or ElevenLabs), listens (Ctrl+Space), guards destructive commands, and shows a holographic Hub.",
   "userConfig": {
     "assistant_name": {
@@ -127,6 +127,12 @@
       "title": "Web without asking",
       "description": "Search the web and read public pages without a permission prompt each time. Pages on this computer or your home network, and unusually long addresses, still ask. A rule you set to deny web access still wins.",
       "default": true
+    },
+    "update_check": {
+      "type": "boolean",
+      "title": "Check for updates",
+      "description": "Once a day, look for a newer Alfred on his marketplace and offer it. Nothing is installed until you agree (\"update yourself\", or /alfred update).",
+      "default": true
     }
   },
   "license": "MIT",
@@ -136,7 +142,8 @@
       "127.0.0.1",
       "api.elevenlabs.io",
       "geocoding-api.open-meteo.com",
-      "api.open-meteo.com"
+      "api.open-meteo.com",
+      "raw.githubusercontent.com"
     ]
   }
 }

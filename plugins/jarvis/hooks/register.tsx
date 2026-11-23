@@ -1,5 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import { greetingKey, phraseFrom, type PhraseKey, type RecentPicks } from './phrases'
+import { CHANGELOG_URL, LATEST_MANIFEST_URL, UPDATE_STEPS, compareVersions, versionOf, whatsNew, windowsUpdateScript } from './updates'
 import { COUNSEL_TYPE, counselModel, counselSpec, isOpus, routingSection } from './routing'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -738,10 +739,78 @@ async function windowsDo($: $, action: WinAction, mode = '', value = ''): Promis
   return describeWindows(action, parseWindows(r.stdout, r.stderr))
 }
 
+// ---------------------------------------------------------------------------
+// Self-update: from Alfred's own marketplace only.
+
+/** A newer version waiting to be installed, once a check has found one. */
+let pendingUpdate: { version: string; news: string[] } | undefined
+let updating = false
+
+async function installedVersion($: $): Promise<string> {
+  try {
+    return versionOf(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) ?? '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+/** Looks for a newer version; resolves what is new, or undefined when he is up to date. */
+async function checkForUpdate($: $): Promise<{ installed: string; latest: string; news: string[] } | undefined> {
+  const installed = await installedVersion($)
+  const m = await $.http.fetch(LATEST_MANIFEST_URL)
+  if (!m.ok) throw new Error(`the update check got HTTP ${m.status}`)
+  const latest = versionOf(m.text)
+  if (!latest || compareVersions(latest, installed) <= 0) {
+    pendingUpdate = undefined
+    return undefined
+  }
+  let news: string[] = []
+  try {
+    const c = await $.http.fetch(CHANGELOG_URL)
+    if (c.ok) news = whatsNew(c.text, installed)
+  } catch {
+    // the list of changes is a courtesy; the version is what counts
+  }
+  pendingUpdate = { version: latest, news }
+  return { installed, latest, news }
+}
+
+/** Installs the latest version with the same two commands the person would type. */
+async function installUpdate($: $): Promise<string> {
+  if (updating) return 'An update is already being installed.'
+  updating = true
+  try {
+    const found = await checkForUpdate($)
+    if (!found) return `Already up to date (version ${await installedVersion($)}).`
+    let out = ''
+    let code = 0
+    if (await onWindows($)) {
+      const r = await $.process.run([...POWERSHELL, encodePowerShell(windowsUpdateScript())], { timeoutMs: 180_000 })
+      out = `${r.stdout}\n${r.stderr}`
+      code = r.exitCode
+    } else {
+      for (const args of UPDATE_STEPS) {
+        const r = await $.process.run(['claude', ...args], { timeoutMs: 120_000 })
+        out += `${r.stdout}\n${r.stderr}\n`
+        code = r.exitCode
+        if (code !== 0) break
+      }
+    }
+    if (code !== 0) return `The update did not install (exit ${code}): ${out.trim().slice(-400)}`
+    pendingUpdate = undefined
+    hubLog($, 'jarvis', `Updated to version ${found.latest}; it takes effect in the next session.`)
+    return `Installed version ${found.latest} (was ${found.installed}). It takes effect from the next session.${found.news.length ? ` New: ${found.news.join('; ')}` : ''}`
+  } catch (err) {
+    return `The update could not be installed: ${String(err).slice(0, 300)}`
+  } finally {
+    updating = false
+  }
+}
+
 const REMINDERS_KEY = 'reminders'
 
 const SAFE_TOOLS = new Set(
-  ['remember', 'recall', 'weather', 'volume', 'media', 'screenshot', 'lock_screen', 'battery', 'remind', 'list_reminders', 'cancel_reminder'].map(
+  ['remember', 'recall', 'weather', 'volume', 'media', 'screenshot', 'lock_screen', 'battery', 'remind', 'list_reminders', 'cancel_reminder', 'update_self'].map(
     n => `mcp__jarvis__${n}`,
   ),
 )
@@ -900,6 +969,8 @@ export const register: Register = (on, options) => {
   const routing = options.smart_routing !== false
   // Searching and reading public pages without asking each time.
   const webFree = options.web_without_asking !== false
+  // Look for a newer Alfred once a day, and offer it.
+  const updateCheck = options.update_check !== false
   const strongModel = counselModel(options.counsel_model)
   const Title = opts.title.charAt(0).toUpperCase() + opts.title.slice(1)
   let safetySpokeAt = 0
@@ -909,11 +980,11 @@ export const register: Register = (on, options) => {
     const regs: Promise<unknown>[] = []
     regs.push($.command.register({
       name: 'jarvis',
-      description: `${NAME}: /jarvis hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences (also /alfred)`,
+      description: `${NAME}: /jarvis hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | update [check] | accept-licences (also /alfred)`,
     }))
     regs.push($.command.register({
       name: 'alfred',
-      description: `${NAME}: /alfred hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences`,
+      description: `${NAME}: /alfred hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | update [check] | accept-licences`,
     }))
     const winTools: { name: string; description: string; inputSchema?: Record<string, unknown> }[] = [
       {
@@ -974,6 +1045,12 @@ export const register: Register = (on, options) => {
       inputSchema: { type: 'object', properties: { place: { type: 'string', description: 'A city or town, e.g. "Singapore" or "Paris, France".' } } },
       isDeferred: false,
     }))
+    regs.push($.tool.register({
+      name: 'update_self',
+      description: `Check for a newer version of ${NAME} (this assistant's own plugin) and, with action "install", install it from ${NAME}'s own marketplace. Use "check" when asked whether there is an update; use "install" only when the person asks to update or agrees to an update you offered. The new version takes effect from the next session.`,
+      inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['check', 'install'] } }, required: ['action'] },
+      isDeferred: false,
+    }))
     if (useMemory) {
       regs.push($.tool.register({
         name: 'remember',
@@ -1008,6 +1085,20 @@ export const register: Register = (on, options) => {
     }
     void refreshHud($)
     void refreshProject($)
+    if (updateCheck) {
+      void (async () => {
+        const today = new Date().toDateString()
+        if ((await $.store.get('update_checked_day')) === today) return
+        await $.store.set('update_checked_day', today)
+        const found = await checkForUpdate($)
+        if (!found || (await $.store.get('update_announced')) === found.latest) return
+        await $.store.set('update_announced', found.latest)
+        hubLog($, 'jarvis', `Version ${found.latest} is available.${found.news[0] ? ` New: ${found.news[0]}` : ''}`)
+        $.ui.toast(`${NAME} ${found.latest} is available. Say "update yourself", or /alfred update.`)
+        // After the greeting, not over it.
+        $.clock.after(6_000, () => speakPhrase($, 'updateReady', opts, { version: found.latest, news: found.news[0] ? ` ${found.news[0]}.` : '' }))
+      })().catch(err => $.ui.log(`update check: ${String(err)}`, { to: 'debug' }))
+    }
     if (voiceInput && hotkey) void armHotkey($, hotkey, opts, language)
     if (useLook) void $.theme.set(LOOK).catch(err => $.ui.log(`jarvis look not set: ${String(err)}`, { to: 'debug' }))
     if (useMemory) {
@@ -1054,6 +1145,9 @@ export const register: Register = (on, options) => {
         ...r.sections,
         { id: 'jarvis:persona', text: persona(opts.title, NAME), scope: 'session' as const },
         { id: 'jarvis:knowledge', text: knowledgeSection(NAME, opts.title, homeCity), scope: 'session' as const },
+        ...(pendingUpdate
+          ? [{ id: 'jarvis:update', text: `${NAME} version ${pendingUpdate.version} is available and has been offered to the person. If they agree ("yes", "go ahead", "update yourself"), call update_self with action "install", then tell them it takes effect from the next session.`, scope: 'session' as const }]
+          : []),
         ...(routing ? [{ id: 'jarvis:routing', text: routingSection(NAME, opts.title, strongModel), scope: 'session' as const }] : []),
         ...(useMemory
           ? [{ id: 'jarvis:memory', text: memorySection(NAME, opts.title, memFolderShown ?? '~/Alfred', memNotes, memRecent), scope: 'session' as const }]
@@ -1167,6 +1261,20 @@ export const register: Register = (on, options) => {
     return { result: `Cancelled: "${gone.text}" (was due ${whenText(gone.due, Date.now())}).` }
   })
 
+  on('tool.run', { tool: 'mcp__jarvis__update_self' }, async ($, e) => {
+    const action = String((e as unknown as { action?: unknown }).action ?? 'check')
+    if (action === 'install') return { result: await installUpdate($) }
+    try {
+      const found = await checkForUpdate($)
+      return {
+        result: found
+          ? `Version ${found.latest} is available (installed: ${found.installed}).${found.news.length ? ` New: ${found.news.join('; ')}` : ''} Offer to install it.`
+          : `Up to date: version ${await installedVersion($)}.`,
+      }
+    } catch (err) {
+      return { result: `Could not check for updates: ${String(err).slice(0, 200)}` }
+    }
+  })
   on('tool.run', { tool: 'mcp__jarvis__weather' }, async ($, e) => {
     const place = String((e as unknown as { place?: unknown }).place ?? '') || homeCity
     try {
@@ -1414,6 +1522,15 @@ export const register: Register = (on, options) => {
         void refreshHud($)
         speakPhrase($, 'resume', opts)
         return { text: 'Voice restored.' }
+      case 'update': {
+        if ((rest[0] ?? '').toLowerCase() === 'check') {
+          const found = await checkForUpdate($).catch(err => { throw new Error(String(err)) })
+          return { text: found ? `Version ${found.latest} is available (installed ${found.installed}).\n${found.news.map(n => `- ${n}`).join('\n')}\nInstall it with /${e.command} update` : `Up to date: version ${await installedVersion($)}.` }
+        }
+        const result = await installUpdate($)
+        speakPhrase($, result.startsWith('Installed') ? 'updated' : 'ack', opts)
+        return { text: result }
+      }
       case 'say':
         void speak($, rest.join(' '), opts)
         return { text: `Speaking: ${rest.join(' ')}` }
@@ -1484,7 +1601,7 @@ export const register: Register = (on, options) => {
       case 'status':
         return { text: `Talk key: ${voiceInput ? hotkeyState : 'voice input off'}\nEngine ${opts.provider} · voice ${opts.provider === 'elevenlabs' ? opts.elVoice : opts.vsVoice} · ${(await $.store.get(MUTE_KEY)) === true ? 'muted' : 'speaking'}\nLast error: ${lastError ?? 'none'}\nSpeech last cut off: ${lastStop}` }
       default:
-        return { text: `Usage: /${e.command} hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | accept-licences` }
+        return { text: `Usage: /${e.command} hub | stop | brief | memory | forget | test | status | check <command> | say <text> | mute | unmute | update [check] | accept-licences` }
     }
   })
 }
