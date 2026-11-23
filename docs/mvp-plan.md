@@ -82,8 +82,9 @@ Message Alfred from anywhere; he answers in his own voice.
    `/plugin configure` (secure storage), never into chat.
 2. `/alfred phone pair` shows a six-digit code. Sending it to the bot links your Telegram account.
    Alfred then ignores everyone else.
-3. Alfred checks Telegram every few seconds from the laptop. No server and no open ports are needed;
-   it only makes outgoing requests.
+3. Telegram messages arrive at **Alfred lite** (Phase 4b), and the laptop collects its jobs from
+   Alfred lite every few seconds. Telegram can deliver to only one place, so everything goes through
+   Alfred lite. No open ports are needed on the laptop; it only makes outgoing requests.
 4. A text or **voice note** from the phone goes into the live session as your request (voice notes are
    transcribed locally with VoiceStudio).
 5. The reply comes back as text plus a **voice note in Alfred's voice** (converted to Telegram's
@@ -103,8 +104,81 @@ awake while plugged in, if you allow it.
 - whether VoiceStudio accepts Telegram's OGG audio directly (otherwise FFmpeg converts it first);
 - that Windows sleep settings do not cut the link.
 
-**Also available without building:** Remote Control. Run `claude remote-control` on the laptop and
-pick the session in the Claude app's Code tab.
+**Use Remote Control alongside it (no building needed):** run `claude remote-control` on the laptop,
+or turn on Settings → Claude Code → Remote Control in the desktop app. Then pick the session in the
+Claude app's Code tab.
+- Remote Control: proper work (code, long tasks, the Hub on the phone).
+- Telegram: quick requests on the go, voice notes and notifications.
+
+---
+
+## Phase 4b: Alfred lite, always on in the cloud (~1.5 sessions; buildable without the laptop)
+
+Keeps Alfred reachable when the laptop is off.
+
+**Where it runs:** a Cloudflare Worker, on the free plan: 100,000 requests a day, with storage and
+timers included.
+
+**What it does:**
+- Receives all Telegram messages. If the laptop is awake, it passes requests to full Alfred.
+- If the laptop is asleep, it answers itself: questions, weather, reminders and your notes.
+- Laptop jobs are queued ("Your laptop is asleep, sir; I'll lock it when it wakes").
+- Voice notes are transcribed in the cloud with Cloudflare's Whisper, within the free daily units.
+- Reminders fire from the cloud, so they reach the phone even when the laptop is shut.
+- Notes sync from the laptop to the Worker's storage on your Cloudflare account (optional; Alfred
+  lite also works without your notes).
+
+**Voice when the laptop is off:** text replies by default. Voice is optional, through ElevenLabs
+(limited monthly characters) or a free plainer cloud voice.
+
+**To do (you, from the phone):**
+- [ ] Create a Cloudflare account (free).
+- [ ] Create an Anthropic API account at platform.claude.com. Top up US$5, or claim the free
+      US$5 by verifying your phone number.
+- [ ] Create the Telegram bot with @BotFather.
+- [ ] Choose the model: Haiku 5.5 (cheapest, under US$1 a month) or Sonnet 5.5 (sharper, about
+      US$2–5 a month).
+- [ ] Give Alfred a Cloudflare access token through the secure credential form. Keys never go into chat.
+
+**To do (Alfred):**
+- [ ] Build the Worker: Telegram webhook, pairing, laptop job queue, an online/offline heartbeat,
+      cloud reminders, Whisper transcription, and Claude replies with weather, reminder and note tools.
+- [ ] Deploy it from the cloud session.
+- [ ] Laptop side (needs the laptop): heartbeat, collecting jobs, sending results back, note sync.
+
+**Cost:** about US$0–1 a month, plus Claude API use.
+
+---
+
+## Phase 4c: WhatsApp, sending messages as you (~1 session)
+
+Official routes only: nothing that risks a ban on your number.
+
+**A. Tap-to-send links (works with the laptop off, through Alfred lite)**
+- "Tell Mum I'll be home by 8." Alfred reads back the recipient and the wording, then waits for
+  your "yes".
+- He then sends a `wa.me` link in Telegram. Tapping it opens WhatsApp with the message ready, and you
+  press Send.
+- Individual chats only; links cannot open group chats.
+
+**B. Alfred sends through WhatsApp Desktop (on the laptop)**
+- "Alfred, WhatsApp Jason: running ten minutes late." He reads it back and waits for "yes".
+- He opens WhatsApp Desktop on the chat (`whatsapp://send?phone=…&text=…`), sends the message, and
+  takes a screenshot to confirm it went.
+- Group chats work here.
+
+**Safeguards (both):**
+- Always reads back the recipient and the exact text; nothing is sent without your "yes".
+- A contacts list (name to number) in Alfred's notes: "Alfred, Mum's number is …".
+- If two contacts match a name, he asks which one.
+
+**Not doing:** unofficial WhatsApp Web bridges (reading chats, auto-replies). They break WhatsApp's
+terms and can get the number banned. Only reconsider with a spare number.
+
+**To do:**
+- [ ] Install WhatsApp Desktop on the laptop and sign in.
+- [ ] Add your main contacts to Alfred's notes.
+- [ ] Alfred: build A with Alfred lite, then B on the laptop.
 
 ---
 
@@ -141,16 +215,20 @@ reminders, in under 45 seconds.
 | 1 | Voice ID | 1 | enrolment, threshold |
 | 2 | Screen awareness | 0.5 | a test run |
 | 3 | Wake word | 1–1.5 | mic, false-wake tuning |
-| 4 | Phone (Telegram) | 2 | the bot token, a voice-note test |
+| 4 | Phone (Telegram plus Remote Control) | 2 | a voice-note test, laptop job collection |
+| 4b | Alfred lite (cloud) | 1.5 | only the laptop half |
+| 4c | WhatsApp sending | 1 | WhatsApp Desktop test |
 | 5 | Briefing | 1 | connecting calendar and email |
 | 6 | Pitch polish | 1 | rehearsal |
-| | **Total** | **~7–8 sessions** | roughly 2 weeks at a relaxed pace |
+| | **Total** | **~10–11 sessions** | roughly 3 weeks at a relaxed pace |
 
-**Can be done without the laptop:** code and tests for Phases 1–4 (built here, published but marked
-untested), the demo script, and the pitch deck.
+**Can be done without the laptop:** Alfred lite (4b) and WhatsApp links (4c A) can be built and
+deployed in full; code and tests for Phases 1–4 can be written (published, but marked untested);
+the demo script and the pitch deck.
 
 ## Decisions still open
 
 1. The wake phrase: "Alfred" (fast, more false wakes) or "Hey Alfred" (safer). Suggested: "Hey Alfred".
-2. Whether the phone link stays Telegram or moves to WhatsApp later (slower to set up).
+2. The model for Alfred lite: Haiku 5.5 or Sonnet 5.5.
 3. Which calendar and email account the briefing uses: Outlook or Gmail.
+4. Whether to sync your notes to Cloudflare (needed for Alfred lite to know them).
